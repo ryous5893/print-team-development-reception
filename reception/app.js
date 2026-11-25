@@ -430,6 +430,8 @@
   $('shortage-only').addEventListener('change', renderOrders);
   orderFilters.push(order => !$('hide-confirmed-cancel').checked || !order.cancelled);
   $('hide-confirmed-cancel').addEventListener('change', renderOrders);
+  orderFilters.push(order => $('show-cancelled').checked || !order.cancelled);
+  $('show-cancelled').addEventListener('change', renderOrders);
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
     const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +
