@@ -316,6 +316,9 @@
       };
       badge.className = 'order-status order-status--' + (colors[status] || 'neutral');
       row.children[5].firstChild.replaceWith(badge);
+      const cancellation = [...state.requests.values()].filter(request => request.orderId === order.id && request.type === 'cancel').at(-1);
+      if (cancellation) row.children[5].append(element('p', '製造側の取消確認：' +
+        (cancellation.answer === '承認' ? '確認済み' : cancellation.answer === '却下' ? '却下' : '確認待ち')));
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
@@ -500,6 +503,8 @@
     }
   });
 
+  orderFilters.push(order => !$('hide-confirmed-cancel').checked || !order.cancelled);
+  $('hide-confirmed-cancel').addEventListener('change', renderOrders);
   orderFilters.push(order => !$('due-today').checked || order.dueDate === localDate());
   $('due-today').addEventListener('change', renderOrders);
 
