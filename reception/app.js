@@ -146,6 +146,7 @@
       input.min = ['goodQuantity', 'shortageQuantity'].includes(field) ? '0' : '1';
       input.step = '1';
     }
+    if (field === 'paper') input.setAttribute('list', 'paper-options');
     if (field === 'completedDate') input.value = localDate();
     if (field === 'version') {
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
