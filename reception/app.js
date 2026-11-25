@@ -500,6 +500,8 @@
     }
   });
 
+  orderFilters.push(order => $('show-cancelled').checked || !order.cancelled);
+  $('show-cancelled').addEventListener('change', renderOrders);
   orderFilters.push(order => !$('due-today').checked || order.dueDate === localDate());
   $('due-today').addEventListener('change', renderOrders);
 
