@@ -72,6 +72,21 @@
     $('message').dataset.error = String(error);
   }
 
+  function csvKind(text) {
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+    const header = lines[0].replaceAll('"', '');
+    if (header === 'department,event') {
+      try { workflow.readBackup(department, text); return '自部署の台帳CSV（「台帳を開く」用）'; }
+      catch { return '台帳CSV（部署・内容を確認してください）'; }
+    }
+    if (header.startsWith('eventId,type,')) {
+      const type = (lines[1] || '').split(',')[1]?.replaceAll('"', '');
+      const definition = Object.hasOwn(workflow.interfaces, type) && workflow.interfaces[type];
+      if (definition) return (definition.from === department ? '自部署から送る' : '相手部署からの') + definition.name + 'CSV';
+    }
+    return '形式不明のCSV';
+  }
+
   function localDate() {
     const now = new Date();
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -340,15 +355,17 @@
     const file = input.files[0];
     if (!file) return;
     input.disabled = true;
+    let kind = '形式不明のCSV';
     try {
       const text = await file.text();
+      kind = csvKind(text);
       const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
       events = result.events;
       if (result.accepted > 0) hasUnsavedChanges = true;
       refresh();
       show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
     } catch (error) {
-      show('取り込みを中止しました。' + error.message, true);
+      show('取り込みを中止しました（' + kind + '）。' + error.message, true);
     } finally {
       input.disabled = false;
       input.value = '';
@@ -366,7 +383,9 @@
     const file = input.files[0];
     if (!file) return;
     try {
-      const saved = workflow.readBackup(department, await file.text());
+      const text = await file.text();
+      if (!csvKind(text).includes('台帳CSV')) throw new Error(csvKind(text) + 'です。「相手部署からのCSV」に読み込んでください。');
+      const saved = workflow.readBackup(department, text);
       const orderCount = workflow.buildState(saved).orders.size;
       if (!confirm('「' + file.name + '」を開きますか？\n注文 ' + orderCount +
         ' 件／履歴 ' + saved.length + ' 件／下書き ' + (saved.drafts?.length || 0) + ' 件\n' +
