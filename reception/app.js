@@ -18,6 +18,10 @@
   };
   let events = [];
   let state = workflow.buildState(events);
+  // RQ-074: 出力処理中（ダウンロードの後片付けが終わる2秒間）は送信中として扱い、
+  // ボタンの無効化と合わせて二重送信を防ぐ
+  const outputGuardMs = 2000;
+  let sending = false;
 
   function element(tag, content) {
     const item = document.createElement(tag);
@@ -135,7 +139,7 @@
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
-    $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
+    $('save-event').disabled = sending || (type !== 'order' && orderChoices(type).length === 0);
   }
 
   function download(name, text) {
@@ -213,7 +217,15 @@
         const button = element('button', 'CSVを書き出す');
         button.type = 'button';
         button.className = 'secondary';
-        button.addEventListener('click', () => eventDownload(event));
+        // RQ-074: 再出力も処理中はボタンを無効化し、連続クリックでも1回だけ書き出す
+        let outputting = false;
+        button.addEventListener('click', () => {
+          if (outputting) return;
+          outputting = true;
+          button.disabled = true;
+          eventDownload(event);
+          setTimeout(() => { outputting = false; button.disabled = false; }, outputGuardMs);
+        });
         actionCell.append(button);
       } else {
         actionCell.textContent = '—';
@@ -237,21 +249,34 @@
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
-    const type = $('operation').value;
-    const data = Object.fromEntries(new FormData($('entry')));
-    const item = { eventId: identifier('EV'), type, ...data };
-    if (type === 'order') item.orderId = identifier('ORD');
-    if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
-    if (type === 'proof') item.proofId = identifier('PRF');
-    // RQ-055: 進捗と遅延は通知日時（updatedAt）を新旧判定に使うので、どちらも自動で付ける
-    if (type === 'progress' || type === 'delay') item.updatedAt = new Date().toISOString();
-
+    // RQ-074: 処理中は再入させない（ボタンの無効化だけに頼らず、送信イベント自体も止める）
+    if (sending) return;
+    sending = true;
+    $('save-event').disabled = true;
     try {
+      const type = $('operation').value;
+      const data = Object.fromEntries(new FormData($('entry')));
+      const item = { eventId: identifier('EV'), type, ...data };
+      if (type === 'order') item.orderId = identifier('ORD');
+      if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
+      if (type === 'proof') item.proofId = identifier('PRF');
+      // RQ-055: 進捗と遅延は通知日時（updatedAt）を新旧判定に使うので、どちらも自動で付ける
+      if (type === 'progress' || type === 'delay') item.updatedAt = new Date().toISOString();
+
       events = workflow.mergeEvents(events, [item]).events;
       refresh();
       eventDownload(item);
       show(workflow.interfaces[type].name + 'を登録し、CSVを書き出しました。');
+      // 成功時は処理中扱いを続け、時間が経ったら通常の有効／無効の状態へ戻す
+      setTimeout(() => {
+        sending = false;
+        const currentType = $('operation').value;
+        $('save-event').disabled = currentType !== 'order' && orderChoices(currentType).length === 0;
+      }, outputGuardMs);
     } catch (error) {
+      // 失敗時はすぐ再操作できるように戻す（入力内容はそのまま残る）
+      sending = false;
+      $('save-event').disabled = false;
       show(error.message, true);
     }
   });
@@ -275,9 +300,15 @@
     }
   });
 
+  // RQ-074: 台帳の保存ボタンも、処理中は無効化して連続クリックで重ねて書き出さない
+  let savingBackup = false;
   $('save-backup').addEventListener('click', () => {
+    if (savingBackup) return;
+    savingBackup = true;
+    $('save-backup').disabled = true;
     download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events));
     show('台帳を保存しました。再開時は「台帳を開く」を使ってください。');
+    setTimeout(() => { savingBackup = false; $('save-backup').disabled = false; }, outputGuardMs);
   });
 
   $('backup').addEventListener('change', async event => {
