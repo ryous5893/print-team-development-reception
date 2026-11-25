@@ -46,6 +46,9 @@ caption { text-align: left; }
 th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bottom: 1px solid var(--line); }
 th { background: var(--accent-light); white-space: nowrap; }
 td { overflow-wrap: anywhere; }
+.order-product { max-width: 14rem; }
+.order-product summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order-product p { overflow-wrap: anywhere; }
 td:first-child, td:last-child { min-width: 5rem; }
 .empty { text-align: center; padding: 1rem; color: #486062; }
 .count { margin-left: .6rem; color: #486062; font-size: .9rem; font-weight: normal; }

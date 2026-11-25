@@ -323,6 +323,12 @@
       const cancellation = [...state.requests.values()].filter(request => request.orderId === order.id && request.type === 'cancel').at(-1);
       if (cancellation) row.children[5].append(element('p', '製造側の取消確認：' +
         (cancellation.answer === '承認' ? '確認済み' : cancellation.answer === '却下' ? '却下' : '確認待ち')));
+      const product = element('details');
+      product.className = 'order-product';
+      const title = element('summary', order.product);
+      title.title = order.product;
+      product.append(title, element('p', order.product));
+      row.children[1].firstChild.replaceWith(product);
       const copy = element('button', 'コピーして新規注文');
       copy.type = 'button';
       copy.className = 'secondary';
