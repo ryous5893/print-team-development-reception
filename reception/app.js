@@ -232,6 +232,15 @@
           Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
         row.children[5].append(element('p', workflow.interfaces[request.type].name + '：未回答 ' + elapsed));
       }
+      const approvedRequest = [...state.requests.values()].filter(request => request.orderId === order.id &&
+        ['order', 'change'].includes(request.type) && request.answer === '承認' && !request.superseded).at(-1);
+      if (approvedRequest) {
+        const difference = Math.round((Date.parse(approvedRequest.confirmedDueDate) - Date.parse(approvedRequest.dueDate)) / 86400000);
+        const comparison = element('p', '希望 ' + approvedRequest.dueDate + ' → 確定 ' + approvedRequest.confirmedDueDate +
+          '（' + (difference > 0 ? '+' : '') + difference + '日）');
+        if (difference) comparison.className = 'attention';
+        row.children[4].append(comparison);
+      }
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');

@@ -63,3 +63,5 @@ dd { margin: 0; white-space: pre-wrap; }
 #order-filters { display: flex; flex-wrap: wrap; gap: .7rem; margin: .6rem 0; }
 #order-filters label { display: flex; align-items: center; gap: .3rem; }
 input[type="checkbox"] { width: auto; }
+
+.attention { color: #8f2618; background: #fff0ea; font-weight: 700; padding: .25rem; }
