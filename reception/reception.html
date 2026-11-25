@@ -30,6 +30,13 @@
             <select id="operation"></select>
           </label>
           <p id="action-help" class="hint"></p>
+          <datalist id="paper-options">
+            <option value="普通紙"></option>
+            <option value="上質紙"></option>
+            <option value="コート紙"></option>
+            <option value="マットコート紙"></option>
+            <option value="光沢紙"></option>
+          </datalist>
           <div id="fields"></div>
           <button id="save-event" type="submit">登録してCSVを書き出す</button>
           <button id="save-draft" type="button" class="secondary">注文を下書き保存</button>
@@ -45,6 +52,7 @@
         <section aria-labelledby="backup-title">
           <h2 id="backup-title">作業の保存・再開</h2>
           <button id="save-backup" type="button" class="secondary">台帳をCSVで保存</button>
+          <p id="last-export" class="hint" role="status"></p>
           <label>台帳を開く
             <input id="backup" type="file" accept=".csv,text/csv">
           </label>
@@ -65,6 +73,11 @@
 
     <section aria-labelledby="orders-title">
       <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
+      <nav aria-label="注文一覧のページ移動">
+        <button id="orders-prev" type="button" class="secondary">前へ</button>
+        <span id="order-page" role="status"></span>
+        <button id="orders-next" type="button" class="secondary">次へ</button>
+      </nav>
       <div id="order-filters">
         <label><input type="checkbox" id="due-today">今日が納期の注文のみ</label>
       </div>
@@ -85,6 +98,7 @@
         </table>
       </div>
     </section>
+    <section id="print-order-sheet" aria-label="印刷用注文票" hidden></section>
   </main>
 </body>
 </html>

@@ -131,6 +131,7 @@
       input.min = ['goodQuantity', 'shortageQuantity'].includes(field) ? '0' : '1';
       input.step = '1';
     }
+    if (field === 'paper') input.setAttribute('list', 'paper-options');
     if (field === 'completedDate') input.value = localDate();
     if (field === 'version') {
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
@@ -194,6 +195,7 @@
     document.body.append(link);
     link.click();
     link.remove();
+    $('last-export').textContent = '最後に書き出したCSV：' + name;
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
@@ -221,11 +223,17 @@
 
   const orderFilters = [];
 
+  const orderPageSize = 25;
+  let orderPage = 1;
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
-    for (const order of [...state.orders.values()].reverse()) {
-      if (!orderFilters.every(filter => filter(order))) continue;
+    const matching = [...state.orders.values()].reverse().filter(order => orderFilters.every(filter => filter(order)));
+    const pageCount = Math.max(1, Math.ceil(matching.length / orderPageSize));
+    orderPage = Math.min(orderPage, pageCount);
+    const start = (orderPage - 1) * orderPageSize;
+    for (const order of matching.slice(start, start + orderPageSize)) {
       const row = element('tr');
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
@@ -250,10 +258,71 @@
         editor.append(messageLabel, save);
         row.children[8].append(editor);
       }
+      const copyId = element('button', 'IDをコピー');
+      copyId.type = 'button';
+      copyId.className = 'secondary';
+      copyId.setAttribute('aria-label', '注文ID ' + order.id + ' をコピー');
+      copyId.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(order.id);
+          show('注文ID ' + order.id + ' をコピーしました。');
+        } catch {
+          show('コピーできませんでした。注文IDを選択して手動でコピーしてください。', true);
+        }
+      });
+      row.children[0].append(copyId);
+      const print = element('button', '注文票を印刷');
+      print.type = 'button';
+      print.className = 'secondary';
+      print.addEventListener('click', () => printOrder(order));
+      row.children[0].append(print);
+      const product = element('details');
+      product.className = 'order-product';
+      const title = element('summary', order.product);
+      title.title = order.product;
+      product.append(title, element('p', order.product));
+      row.children[1].firstChild.replaceWith(product);
+      {
+      const source = events.find(event => event.type === 'order' && event.orderId === order.id);
+      const editor = element('details');
+      editor.append(element('summary', '顧客の連絡先'));
+      const phone = element('input');
+      phone.type = 'tel';
+      phone.value = source.salesCustomer?.phone ?? '';
+      const phoneLabel = element('label', '電話番号');
+      phoneLabel.append(phone);
+      const email = element('input');
+      email.type = 'email';
+      email.value = source.salesCustomer?.email ?? '';
+      const emailLabel = element('label', 'メールアドレス');
+      emailLabel.append(email);
+      const save = element('button', '保存');
+      save.type = 'button';
+      save.addEventListener('click', () => {
+        if (!phone.reportValidity() || !email.reportValidity()) return;
+        source.salesCustomer = { phone: phone.value.trim(), email: email.value.trim() };
+        hasUnsavedChanges = true;
+        show('注文 ' + order.id + ' の顧客の連絡先を台帳に記録しました。');
+      });
+      editor.append(phoneLabel, emailLabel, save);
+      row.children[1].append(editor);
+      }
+      const status = statusOf(order);
+      const badge = element('span', status);
+      const colors = {
+        'キャンセル済み': 'neutral', '製造依頼却下': 'danger', '製造承認待ち': 'waiting',
+        '製造承認済み': 'progress', '準備中': 'progress', '印刷中': 'progress',
+        '加工中': 'progress', '検品中': 'progress', '完了・不足あり': 'waiting', '完了': 'done'
+      };
+      badge.className = 'order-status order-status--' + (colors[status] || 'neutral');
+      row.children[5].firstChild.replaceWith(badge);
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = list.querySelectorAll('tr:not(:has(.empty))').length + '件表示 ／ 全' + state.orders.size + '件';
+    $('order-count').textContent = matching.length + '件該当 ／ 全' + state.orders.size + '件';
+    $('order-page').textContent = orderPage + ' / ' + pageCount + 'ページ';
+    $('orders-prev').disabled = orderPage === 1;
+    $('orders-next').disabled = orderPage === pageCount;
   }
 
   function renderHistory() {
@@ -378,11 +447,21 @@
     input.disabled = true;
     try {
       const text = await file.text();
-      const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
+      const receivedAt = new Date().toISOString();
+      const incoming = workflow.readExchange(text, department);
+      const previous = new Map(events.map(item => [item.eventId, item]));
+      const result = workflow.mergeEvents(events, incoming.map(item => ({ ...item, receivedAt })));
+      const duplicateDates = [...new Set(incoming
+        .filter(item => previous.has(item.eventId))
+        .map(item => {
+          const value = previous.get(item.eventId).receivedAt;
+          return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('ja-JP') : '記録なし';
+        }))];
       events = result.events;
       if (result.accepted > 0) hasUnsavedChanges = true;
       refresh();
-      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
+      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' +
+        (duplicateDates.length ? ' 前回取り込み：' + duplicateDates.join('、') : ''));
     } catch (error) {
       show('取り込みを中止しました。' + error.message, true);
     } finally {
@@ -433,6 +512,29 @@
   }
   window.addEventListener('focus', updateTodayFilter);
   setInterval(updateTodayFilter, 1000);
+
+  $('orders-prev').addEventListener('click', () => { orderPage--; renderOrders(); });
+  $('orders-next').addEventListener('click', () => { orderPage++; renderOrders(); });
+  $('order-filters').addEventListener('change', () => {
+    if (orderPage === 1) return;
+    orderPage = 1;
+    renderOrders();
+  });
+
+  function printOrder(order) {
+    const sheet = $('print-order-sheet');
+    const details = element('dl');
+    const fields = [
+      ['注文ID', order.id], ['品名', order.product], ['用紙', order.paper],
+      ['部数', order.quantity + '部'], ['納期', order.dueDate], ['状態', statusOf(order)],
+      ['校正', order.proofStatus || '—'], ['完了見込み', order.expectedDate || '—']
+    ];
+    for (const [label, value] of fields) details.append(element('dt', label), element('dd', value));
+    sheet.replaceChildren(element('h1', '注文票'), details);
+    document.body.classList.add('printing-order');
+    try { window.print(); }
+    finally { document.body.classList.remove('printing-order'); }
+  }
 
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
