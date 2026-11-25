@@ -227,6 +227,11 @@
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
       row.append(...values.map(value => element('td', value)));
+      for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
+        const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
+          Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
+        row.children[5].append(element('p', workflow.interfaces[request.type].name + '：未回答 ' + elapsed));
+      }
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
@@ -331,7 +336,7 @@
     if (type === 'proofReply' && selectedProof && !confirm('校正回答を登録しますか？\n注文ID：' +
       data.orderId + '\n品名：' + state.orders.get(data.orderId).product + '\n第' + selectedProof.version +
       '版\n回答：' + data.proofDecision + '\n修正コメント：' + (data.comment || 'なし'))) return;
-    const item = { eventId: identifier('EV'), type, ...data };
+    const item = { eventId: identifier('EV'), type, ...data, createdAt: new Date().toISOString() };
     if (type === 'order') item.orderId = identifier('ORD');
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
     if (type === 'proof') item.proofId = identifier('PRF');
