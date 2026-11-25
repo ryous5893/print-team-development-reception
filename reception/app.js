@@ -22,6 +22,18 @@
   // ボタンの無効化と合わせて二重送信を防ぐ
   const outputGuardMs = 2000;
   let sending = false;
+  // RQ-063: 台帳CSVに保存していない更新があるかどうか（ある間だけ離脱時に警告する）
+  let unsaved = false;
+  function markUnsaved() {
+    unsaved = true;
+    // 新しい更新が入ったら台帳保存の内容が変わるので、RQ-074の二重押しガード中でも
+    // 保存ボタンをすぐ押せる状態に戻す（savingBackup等は下で宣言されるが、呼ばれるのは初期化後）
+    if (savingBackup) {
+      savingBackup = false;
+      clearTimeout(savingBackupTimer);
+      $('save-backup').disabled = false;
+    }
+  }
 
   function element(tag, content) {
     const item = document.createElement(tag);
@@ -264,6 +276,7 @@
       if (type === 'progress' || type === 'delay') item.updatedAt = new Date().toISOString();
 
       events = workflow.mergeEvents(events, [item]).events;
+      markUnsaved();
       refresh();
       eventDownload(item);
       show(workflow.interfaces[type].name + 'を登録し、CSVを書き出しました。');
@@ -290,6 +303,8 @@
       const text = await file.text();
       const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
       events = result.events;
+      // 新規に取り込んだ分がある時だけ未保存にする（取り込み済みの再取り込みでは変えない）
+      if (result.accepted > 0) markUnsaved();
       refresh();
       show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
     } catch (error) {
@@ -301,14 +316,18 @@
   });
 
   // RQ-074: 台帳の保存ボタンも、処理中は無効化して連続クリックで重ねて書き出さない
+  // ただし RQ-063: 前回の保存後に新しい更新があった場合は、間隔が短くても保存できるようにする
   let savingBackup = false;
+  let savingBackupTimer = null;
   $('save-backup').addEventListener('click', () => {
-    if (savingBackup) return;
+    if (savingBackup && !unsaved) return;
     savingBackup = true;
     $('save-backup').disabled = true;
+    unsaved = false;
     download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events));
     show('台帳を保存しました。再開時は「台帳を開く」を使ってください。');
-    setTimeout(() => { savingBackup = false; $('save-backup').disabled = false; }, outputGuardMs);
+    clearTimeout(savingBackupTimer);
+    savingBackupTimer = setTimeout(() => { savingBackup = false; $('save-backup').disabled = false; }, outputGuardMs);
   });
 
   $('backup').addEventListener('change', async event => {
@@ -319,6 +338,8 @@
       const saved = workflow.readBackup(department, await file.text());
       if (events.length && !confirm('現在の台帳を置き換えますか？')) return;
       events = saved;
+      // 開いた台帳はファイルの内容そのものなので、未保存の更新はない状態になる
+      unsaved = false;
       refresh();
       show('保存済みの台帳を開きました。');
     } catch (error) {
@@ -326,6 +347,14 @@
     } finally {
       input.value = '';
     }
+  });
+
+  // RQ-063: 未保存の更新がある間だけ、閉じる／再読み込みの前にブラウザの確認を出す。
+  // 保存済み・変更なしの場合は何もしない（警告しない）。
+  window.addEventListener('beforeunload', event => {
+    if (!unsaved) return;
+    event.preventDefault();
+    event.returnValue = '';
   });
 
   const guidance = $('csv-types');
