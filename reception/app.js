@@ -17,6 +17,8 @@
     shortageQuantity: ['不足部数', 'number']
   };
   let events = [];
+  let drafts = [];
+  let activeDraftId = '';
   let state = workflow.buildState(events);
   let hasUnsavedChanges = false;
   const formDrafts = new Map();
@@ -162,6 +164,7 @@
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
     $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
+    $('save-draft').hidden = type !== 'order';
   }
 
   function download(name, text) {
@@ -245,11 +248,51 @@
     if (!list.children.length) rowMessage(list, 5, 'やり取りはまだありません。');
   }
 
+  function renderDrafts() {
+    const list = $('drafts');
+    list.replaceChildren();
+    for (const draft of drafts) {
+      const row = element('tr');
+      row.append(...['下書き', draft.product || '未入力', draft.paper || '未入力',
+        draft.quantity ? draft.quantity + '部' : '未入力', draft.dueDate || '未入力']
+        .map(value => element('td', value)));
+      const action = element('td');
+      const edit = element('button', '編集・製造依頼へ');
+      edit.type = 'button';
+      edit.addEventListener('click', () => {
+        rememberForm();
+        activeDraftId = draft.id;
+        $('operation').value = 'order';
+        formDrafts.set('order', draft);
+        restoreForm();
+        $('fields').querySelector('[name="product"]').focus();
+        show('下書きを開きました。内容を確認し、登録すると製造依頼を書き出します。');
+      });
+      action.append(edit);
+      row.append(action);
+      list.append(row);
+    }
+    if (!drafts.length) rowMessage(list, 6, '下書きはありません。');
+    $('draft-count').textContent = drafts.length + '件';
+  }
+
+  $('save-draft').addEventListener('click', () => {
+    if ($('operation').value !== 'order') return;
+    const data = Object.fromEntries(new FormData($('entry')));
+    const draft = { id: activeDraftId || identifier('DRAFT'), ...data };
+    drafts = [...drafts.filter(item => item.id !== draft.id), draft];
+    activeDraftId = draft.id;
+    hasUnsavedChanges = true;
+    renderDrafts();
+    show('注文を下書き保存しました。閉じる前に台帳を保存してください。');
+  });
+
   function refresh() {
     state = workflow.buildState(events);
     renderOrders();
     renderHistory();
     renderForm();
+    renderDrafts();
   }
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
@@ -270,6 +313,10 @@
 
     try {
       events = workflow.mergeEvents(events, [item]).events;
+      if (type === 'order') {
+        drafts = drafts.filter(draft => draft.id !== activeDraftId);
+        activeDraftId = '';
+      }
       hasUnsavedChanges = true;
       formDrafts.delete(type);
       refresh();
@@ -301,7 +348,7 @@
   });
 
   $('save-backup').addEventListener('click', () => {
-    download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events));
+    download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events, drafts));
     hasUnsavedChanges = false;
     show('台帳を保存しました。再開時は「台帳を開く」を使ってください。');
   });
@@ -314,9 +361,11 @@
       const saved = workflow.readBackup(department, await file.text());
       const orderCount = workflow.buildState(saved).orders.size;
       if (!confirm('「' + file.name + '」を開きますか？\n注文 ' + orderCount +
-        ' 件／履歴 ' + saved.length + ' 件\n' +
-        (events.length ? '現在の台帳を置き換えます。' : 'この台帳で作業を開始します。'))) return;
+        ' 件／履歴 ' + saved.length + ' 件／下書き ' + (saved.drafts?.length || 0) + ' 件\n' +
+        (events.length || drafts.length ? '現在の台帳を置き換えます。' : 'この台帳で作業を開始します。'))) return;
       events = saved;
+      drafts = saved.drafts || [];
+      activeDraftId = '';
       hasUnsavedChanges = false;
       formDrafts.clear();
       refresh();

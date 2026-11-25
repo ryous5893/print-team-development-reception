@@ -283,8 +283,10 @@
     });
   }
 
-  function exportBackup(department, events) {
-    return encodeCsv([['department', 'event'], ...events.map(event => [department, JSON.stringify(event)])]);
+  function exportBackup(department, events, drafts = []) {
+    const rows = events.map(event => [department, JSON.stringify(event)]);
+    if (department === 'sales' && drafts.length) rows.push([department, JSON.stringify({ salesDrafts: drafts })]);
+    return encodeCsv([['department', 'event'], ...rows]);
   }
 
   function readBackup(department, text) {
@@ -294,6 +296,19 @@
       requireThat(row.length === 2 && row[0] === department, '自部署で保存した台帳を選んでください。');
       return JSON.parse(row[1]);
     });
+    const metadata = events.at(-1);
+    if (department === 'sales' && metadata && Object.hasOwn(metadata, 'salesDrafts')) {
+      requireThat(!metadata.type && Array.isArray(metadata.salesDrafts), '下書き情報が不正です。');
+      const ids = new Set();
+      for (const draft of metadata.salesDrafts) {
+        requireThat(draft && typeof draft.id === 'string' && /^[A-Za-z0-9_-]+$/.test(draft.id) &&
+          !ids.has(draft.id) && ['product', 'paper', 'quantity', 'dueDate'].every(field =>
+            typeof draft[field] === 'string'), '下書き情報が不正です。');
+        ids.add(draft.id);
+      }
+      events.pop();
+      events.drafts = metadata.salesDrafts;
+    }
     buildState(events);
     return events;
   }
