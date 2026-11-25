@@ -112,6 +112,7 @@
         requireThat(!order.initialFinished, '当初分の製造完了後は注文変更を承認できません。');
         request.superseded = request.sequence < (order.lastApprovedChangeSequence ?? -1);
         if (!request.superseded) {
+          request.beforeChange = { paper: order.paper, quantity: order.quantity, dueDate: order.dueDate };
           order.paper = request.paper;
           order.quantity = Number(request.quantity);
           order.lastApprovedChangeSequence = request.sequence;
@@ -125,6 +126,9 @@
       if (approved && request.type === 'order') order.approved = true;
       if (approved && ['order', 'change'].includes(request.type) && !request.superseded) {
         order.dueDate = event.confirmedDueDate || request.dueDate;
+      }
+      if (approved && request.type === 'change' && !request.superseded) {
+        request.afterChange = { paper: order.paper, quantity: order.quantity, dueDate: order.dueDate };
       }
       request.answer = event.decision;
       request.confirmedDueDate = event.confirmedDueDate || request.dueDate || '';
