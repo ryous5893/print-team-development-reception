@@ -388,6 +388,15 @@
         dateLabel.append(date); methodLabel.append(method); contact.append(dateLabel, methodLabel, save);
       } else contact.append(element('p', '製造承認後に連絡を記録できます。'));
       row.children[4].append(contact);
+      const status = statusOf(order);
+      const badge = element('span', status);
+      const colors = {
+        'キャンセル済み': 'neutral', '製造依頼却下': 'danger', '製造承認待ち': 'waiting',
+        '製造承認済み': 'progress', '準備中': 'progress', '印刷中': 'progress',
+        '加工中': 'progress', '検品中': 'progress', '完了・不足あり': 'waiting', '完了': 'done'
+      };
+      badge.className = 'order-status order-status--' + (colors[status] || 'neutral');
+      row.children[5].firstChild.replaceWith(badge);
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');

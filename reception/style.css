@@ -52,6 +52,12 @@ td:first-child, td:last-child { min-width: 5rem; }
 summary { cursor: pointer; }
 dl { display: grid; grid-template-columns: max-content minmax(6rem, 1fr); gap: .15rem .65rem; margin: .5rem 0 0; }
 dd { margin: 0; white-space: pre-wrap; }
+.order-status { display: inline-block; font-weight: 700; border-radius: .3rem; padding: .2rem .35rem; }
+.order-status--neutral { background: #edf0f0; color: #34484b; }
+.order-status--danger { background: #ffe8e1; color: #8a2619; }
+.order-status--waiting { background: #fff0c2; color: #6d4b00; }
+.order-status--progress { background: #e6effc; color: #1d4674; }
+.order-status--done { background: #dcf3e6; color: #175336; }
 #csv-types { columns: 2; }
 @media (max-width: 730px) {
   .workspace { grid-template-columns: 1fr; }
