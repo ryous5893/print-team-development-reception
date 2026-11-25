@@ -337,6 +337,21 @@
       if (event.type === 'reply' && state.requests.get(event.requestId)?.superseded) {
         detail.append(element('p', '古い変更の承認のため、現在の注文は上書きしていません。'));
       }
+      const changeRequest = event.type === 'reply' && state.requests.get(event.requestId);
+      if (changeRequest?.beforeChange && changeRequest.afterChange) {
+        const comparison = element('table');
+        comparison.append(element('caption', '承認済み変更の前後'));
+        const header = element('tr');
+        header.append(...['項目', '変更前', '変更後'].map(value => element('th', value)));
+        comparison.append(header);
+        for (const field of ['quantity', 'paper', 'dueDate']) {
+          const row = element('tr');
+          row.append(...[fields[field][0], changeRequest.beforeChange[field], changeRequest.afterChange[field]].map(value => element('td', value)));
+          if (changeRequest.beforeChange[field] !== changeRequest.afterChange[field]) row.className = 'changed';
+          comparison.append(row);
+        }
+        detail.append(comparison);
+      }
       const metadata = element('dl');
       for (const field of definition.fields) {
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));

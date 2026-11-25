@@ -75,6 +75,8 @@ input[type="checkbox"] { width: auto; }
 
 .attention { color: #8f2618; background: #fff0ea; font-weight: 700; padding: .25rem; }
 
+.changed { background: #fff4cb; font-weight: 700; }
+
 .order-scroll { max-height: min(65vh, 48rem); }
 .order-scroll thead th { position: sticky; top: 0; z-index: 1; }
 
