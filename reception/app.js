@@ -550,12 +550,21 @@
     try {
       const text = await file.text();
       kind = csvKind(text);
-      const result = workflow.mergeEvents(events, workflow.readExchange(text, department).map(item =>
-        item.type === 'proof' ? { ...item, receivedAt: new Date().toISOString() } : item));
+      const receivedAt = new Date().toISOString();
+      const incoming = workflow.readExchange(text, department);
+      const previous = new Map(events.map(item => [item.eventId, item]));
+      const result = workflow.mergeEvents(events, incoming.map(item => ({ ...item, receivedAt })));
+      const duplicateDates = [...new Set(incoming
+        .filter(item => previous.has(item.eventId))
+        .map(item => {
+          const value = previous.get(item.eventId).receivedAt;
+          return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('ja-JP') : '記録なし';
+        }))];
       events = result.events;
       if (result.accepted > 0) hasUnsavedChanges = true;
       refresh();
-      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
+      show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。' +
+        (duplicateDates.length ? ' 前回取り込み：' + duplicateDates.join('、') : ''));
     } catch (error) {
       show('取り込みを中止しました（' + kind + '）。' + error.message, true);
     } finally {
