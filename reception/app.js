@@ -289,7 +289,10 @@
     if (!file) return;
     try {
       const saved = workflow.readBackup(department, await file.text());
-      if (events.length && !confirm('現在の台帳を置き換えますか？')) return;
+      const orderCount = workflow.buildState(saved).orders.size;
+      if (!confirm('「' + file.name + '」を開きますか？\n注文 ' + orderCount +
+        ' 件／履歴 ' + saved.length + ' 件\n' +
+        (events.length ? '現在の台帳を置き換えます。' : 'この台帳で作業を開始します。'))) return;
       events = saved;
       hasUnsavedChanges = false;
       refresh();
