@@ -97,7 +97,8 @@
       if (event.type !== 'order') {
         requireThat(availableOrder(order), '承認済みで有効な注文を選んでください。');
       }
-      state.requests.set(event.requestId, { ...event, answer: '', finished: false, targetQuantity: Number(event.quantity || 0) });
+      state.requests.set(event.requestId, { ...event, sequence: state.requests.size,
+        answer: '', finished: false, targetQuantity: Number(event.quantity || 0) });
       return;
     }
 
@@ -109,16 +110,20 @@
       }
       if (approved && request.type === 'change') {
         requireThat(!order.initialFinished, '当初分の製造完了後は注文変更を承認できません。');
-        order.paper = request.paper;
-        order.quantity = Number(request.quantity);
-        state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
+        request.superseded = request.sequence < (order.lastApprovedChangeSequence ?? -1);
+        if (!request.superseded) {
+          order.paper = request.paper;
+          order.quantity = Number(request.quantity);
+          order.lastApprovedChangeSequence = request.sequence;
+          state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
+        }
       }
       if (approved && request.type === 'cancel') {
         requireThat(!order.initialFinished, '当初分の製造完了後はキャンセルを承認できません。');
         order.cancelled = true;
       }
       if (approved && request.type === 'order') order.approved = true;
-      if (approved && ['order', 'change'].includes(request.type)) {
+      if (approved && ['order', 'change'].includes(request.type) && !request.superseded) {
         order.dueDate = event.confirmedDueDate || request.dueDate;
       }
       request.answer = event.decision;
@@ -283,8 +288,10 @@
     });
   }
 
-  function exportBackup(department, events) {
-    return encodeCsv([['department', 'event'], ...events.map(event => [department, JSON.stringify(event)])]);
+  function exportBackup(department, events, drafts = []) {
+    const rows = events.map(event => [department, JSON.stringify(event)]);
+    if (department === 'sales' && drafts.length) rows.push([department, JSON.stringify({ salesDrafts: drafts })]);
+    return encodeCsv([['department', 'event'], ...rows]);
   }
 
   function readBackup(department, text) {
@@ -294,6 +301,19 @@
       requireThat(row.length === 2 && row[0] === department, '自部署で保存した台帳を選んでください。');
       return JSON.parse(row[1]);
     });
+    const metadata = events.at(-1);
+    if (department === 'sales' && metadata && Object.hasOwn(metadata, 'salesDrafts')) {
+      requireThat(!metadata.type && Array.isArray(metadata.salesDrafts), '下書き情報が不正です。');
+      const ids = new Set();
+      for (const draft of metadata.salesDrafts) {
+        requireThat(draft && typeof draft.id === 'string' && /^[A-Za-z0-9_-]+$/.test(draft.id) &&
+          !ids.has(draft.id) && ['product', 'paper', 'quantity', 'dueDate'].every(field =>
+            typeof draft[field] === 'string'), '下書き情報が不正です。');
+        ids.add(draft.id);
+      }
+      events.pop();
+      events.drafts = metadata.salesDrafts;
+    }
     buildState(events);
     return events;
   }

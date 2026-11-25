@@ -46,12 +46,21 @@ caption { text-align: left; }
 th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bottom: 1px solid var(--line); }
 th { background: var(--accent-light); white-space: nowrap; }
 td { overflow-wrap: anywhere; }
+.order-product { max-width: 14rem; }
+.order-product summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order-product p { overflow-wrap: anywhere; }
 td:first-child, td:last-child { min-width: 5rem; }
 .empty { text-align: center; padding: 1rem; color: #486062; }
 .count { margin-left: .6rem; color: #486062; font-size: .9rem; font-weight: normal; }
 summary { cursor: pointer; }
 dl { display: grid; grid-template-columns: max-content minmax(6rem, 1fr); gap: .15rem .65rem; margin: .5rem 0 0; }
 dd { margin: 0; white-space: pre-wrap; }
+.order-status { display: inline-block; font-weight: 700; border-radius: .3rem; padding: .2rem .35rem; }
+.order-status--neutral { background: #edf0f0; color: #34484b; }
+.order-status--danger { background: #ffe8e1; color: #8a2619; }
+.order-status--waiting { background: #fff0c2; color: #6d4b00; }
+.order-status--progress { background: #e6effc; color: #1d4674; }
+.order-status--done { background: #dcf3e6; color: #175336; }
 #csv-types { columns: 2; }
 @media (max-width: 730px) {
   .workspace { grid-template-columns: 1fr; }
@@ -59,4 +68,24 @@ dd { margin: 0; white-space: pre-wrap; }
 @media (max-width: 460px) {
   #fields { grid-template-columns: 1fr; }
   #csv-types { columns: 1; }
+}
+#order-filters { display: flex; flex-wrap: wrap; gap: .7rem; margin: .6rem 0; }
+#order-filters label { display: flex; align-items: center; gap: .3rem; }
+input[type="checkbox"] { width: auto; }
+
+.attention { color: #8f2618; background: #fff0ea; font-weight: 700; padding: .25rem; }
+
+.unchanged { color: #725100; background: #fff4cb; font-size: .85rem; padding: .2rem; }
+.unchanged[hidden] { display: none; }
+
+.order-scroll { max-height: min(65vh, 48rem); }
+.order-scroll thead th { position: sticky; top: 0; z-index: 1; }
+
+@media print {
+  @page { size: A4; margin: 15mm; }
+  body.printing-order { padding: 0; background: white; }
+  body.printing-order > header, .printing-order main > :not(#print-order-sheet) { display: none; }
+  .printing-order main { display: block; padding: 0; }
+  .printing-order #print-order-sheet { display: block; border: 0; padding: 0; }
+  #print-order-sheet dd { overflow-wrap: anywhere; }
 }
