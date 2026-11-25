@@ -35,7 +35,10 @@
     renderForm(draft?.orderId || '');
     if (!draft) return;
     for (const input of $('fields').querySelectorAll('[name]')) {
-      if (Object.hasOwn(draft, input.name)) input.value = draft[input.name];
+      if (Object.hasOwn(draft, input.name)) {
+        input.value = draft[input.name];
+        input.dispatchEvent(new Event('input'));
+      }
     }
   }
 
