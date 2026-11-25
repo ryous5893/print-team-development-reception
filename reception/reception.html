@@ -75,7 +75,7 @@
         <label><input type="checkbox" id="shortage-only">完了・良品不足のみ</label>
         <label><input type="checkbox" id="unanswered-only">製造への依頼が未回答の注文のみ</label>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap order-scroll" tabindex="0" role="region" aria-labelledby="orders-title">
         <table aria-labelledby="orders-title">
           <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">納期</th><th scope="col">状態</th><th scope="col">校正</th><th scope="col">完了見込み</th><th scope="col">遅延理由</th><th scope="col">良品累計</th></tr></thead>
           <tbody id="orders"></tbody>
