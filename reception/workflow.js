@@ -12,7 +12,9 @@
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
     delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate updatedAt' },
-    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' }
+    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' },
+    // RQ-037（案A）: 完了報告の訂正は、既存の完了報告CSVとは別の種類として識別する
+    finishCorrection: { name: '製造完了訂正報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' }
   };
   for (const definition of Object.values(interfaces)) {
     definition.fields = definition.fields.split(' ');
@@ -214,6 +216,20 @@
         request.completedDate = event.completedDate;
         order.goodQuantity += request.goodQuantity;
         if (request.type === 'order') order.initialFinished = true;
+        break;
+      case 'finishCorrection':
+        // RQ-037: 訂正は完了済みの依頼にだけ許可する。通常の完了報告（finish）は従来どおり完了済みに使えない。
+        requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
+          request.answer === '承認' && request.finished, '完了済みの製造依頼を選んでください。');
+        requireThat(Number(event.goodQuantity) + Number(event.shortageQuantity) === request.targetQuantity,
+          '良品部数と不足部数の合計を対象依頼の部数に合わせてください。');
+        // 加算ではなく差分で置き換える（旧値との差だけ注文の良品累計を動かす）
+        order.goodQuantity += Number(event.goodQuantity) - request.goodQuantity;
+        request.goodQuantity = Number(event.goodQuantity);
+        request.shortageQuantity = Number(event.shortageQuantity);
+        request.completedDate = event.completedDate;
+        request.corrected = true;
+        request.correctionCount = (request.correctionCount || 0) + 1;
         break;
     }
   }

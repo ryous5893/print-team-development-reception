@@ -78,6 +78,12 @@
       return orders.filter(order => [...state.requests.values()].some(request =>
         request.orderId === order.id && !request.answer));
     }
+    // RQ-037: 訂正の対象は、完了済みの依頼がある注文だけを出す
+    if (type === 'finishCorrection') {
+      return orders.filter(order => [...state.requests.values()].some(request =>
+        request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
+        request.answer === '承認' && request.finished));
+    }
     return orders.filter(workflow.availableOrder);
   }
 
@@ -85,9 +91,11 @@
     return [...state.requests.values()]
       .filter(request => order && request.orderId === order.id)
       .filter(request => type === 'reply' ? !request.answer :
+        // RQ-037: 訂正は完了済みの依頼だけ、通常の完了報告は未完了の依頼だけを対象にする
+        type === 'finishCorrection' ? ['order', 'additional'].includes(request.type) && request.answer === '承認' && request.finished :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
-        (type === 'finish' ? request.targetQuantity + '部 · ' : '') + request.requestId]);
+        (type === 'finish' || type === 'finishCorrection' ? request.targetQuantity + '部 · ' : '') + request.requestId]);
   }
 
   function proofChoices(order) {
