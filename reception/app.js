@@ -278,7 +278,11 @@
   function renderHistory() {
     const list = $('history');
     list.replaceChildren();
+    const selectedOrder = $('history-order').value;
+    $('history-order').replaceChildren(option('', '全注文'), ...[...state.orders.values()].map(order => option(order.id, order.id + ' · ' + order.product)));
+    $('history-order').value = state.orders.has(selectedOrder) ? selectedOrder : '';
     for (const event of [...events].reverse()) {
+      if ($('history-order').value && event.orderId !== $('history-order').value) continue;
       const definition = workflow.interfaces[event.type];
       const sent = definition.from === department;
       const row = element('tr');
@@ -312,7 +316,7 @@
         button.type = 'button';
         button.className = 'secondary';
         button.addEventListener('click', () => eventDownload(event));
-        actionCell.append(button);
+        actionCell.append(element('p', event.type + '-' + event.orderId + '-' + event.eventId + '.csv'), button);
       } else {
         actionCell.textContent = '—';
       }
@@ -472,6 +476,7 @@
   $('hide-confirmed-cancel').addEventListener('change', renderOrders);
   orderFilters.push(order => $('show-cancelled').checked || !order.cancelled);
   $('show-cancelled').addEventListener('change', renderOrders);
+  $('history-order').addEventListener('change', renderHistory);
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
     const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +
