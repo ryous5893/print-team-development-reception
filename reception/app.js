@@ -95,7 +95,8 @@
   function inputFor(type, field, order) {
     const [, kind] = fields[field];
     if (field === 'orderId') {
-      return select(field, orderChoices(type).map(item => [item.id, item.product + ' · ' + item.id]));
+      return select(field, orderChoices(type).map(item => [item.id,
+        item.product + ' · ' + item.quantity + '部 · 納期 ' + item.dueDate + ' · ' + item.id]));
     }
     if (field === 'requestId') return select(field, requestChoices(type, order));
     if (field === 'proofId') return select(field, proofChoices(order));
