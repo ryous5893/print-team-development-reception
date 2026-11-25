@@ -97,7 +97,8 @@
       if (event.type !== 'order') {
         requireThat(availableOrder(order), '承認済みで有効な注文を選んでください。');
       }
-      state.requests.set(event.requestId, { ...event, answer: '', finished: false, targetQuantity: Number(event.quantity || 0) });
+      state.requests.set(event.requestId, { ...event, sequence: state.requests.size,
+        answer: '', finished: false, targetQuantity: Number(event.quantity || 0) });
       return;
     }
 
@@ -109,20 +110,24 @@
       }
       if (approved && request.type === 'change') {
         requireThat(!order.initialFinished, '当初分の製造完了後は注文変更を承認できません。');
-        request.beforeChange = { paper: order.paper, quantity: order.quantity, dueDate: order.dueDate };
-        order.paper = request.paper;
-        order.quantity = Number(request.quantity);
-        state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
+        request.superseded = request.sequence < (order.lastApprovedChangeSequence ?? -1);
+        if (!request.superseded) {
+          request.beforeChange = { paper: order.paper, quantity: order.quantity, dueDate: order.dueDate };
+          order.paper = request.paper;
+          order.quantity = Number(request.quantity);
+          order.lastApprovedChangeSequence = request.sequence;
+          state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
+        }
       }
       if (approved && request.type === 'cancel') {
         requireThat(!order.initialFinished, '当初分の製造完了後はキャンセルを承認できません。');
         order.cancelled = true;
       }
       if (approved && request.type === 'order') order.approved = true;
-      if (approved && ['order', 'change'].includes(request.type)) {
+      if (approved && ['order', 'change'].includes(request.type) && !request.superseded) {
         order.dueDate = event.confirmedDueDate || request.dueDate;
       }
-      if (approved && request.type === 'change') {
+      if (approved && request.type === 'change' && !request.superseded) {
         request.afterChange = { paper: order.paper, quantity: order.quantity, dueDate: order.dueDate };
       }
       request.answer = event.decision;
