@@ -73,3 +73,7 @@ input[type="checkbox"] { width: auto; }
 
 #message { position: fixed; z-index: 1000; bottom: 1rem; left: 1rem; right: 1rem; max-width: 1200px; margin-inline: auto; border: 1px solid var(--line); box-shadow: 0 3px 14px #19303333; }
 body { padding-bottom: 5rem; }
+
+.order-product { max-width: 14rem; }
+.order-product summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order-product p { overflow-wrap: anywhere; }
