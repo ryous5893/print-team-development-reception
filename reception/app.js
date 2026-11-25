@@ -411,12 +411,20 @@
     if (!file) return;
     try {
       const saved = workflow.readBackup(department, await file.text());
-      if (events.length && !confirm('現在の台帳を置き換えますか？')) return;
+      // RQ-044: 入れ替える直前に、対象ファイル名と件数を必ず確認する（現在の台帳が空でも出す）。
+      // キャンセルした場合は現在の台帳をそのまま保持する。
+      const orderCount = workflow.buildState(saved).orders.size;
+      const message = '台帳を入れ替えますか？\n\n' +
+        '対象ファイル：' + file.name + '\n' +
+        '件数：記録 ' + saved.length + ' 件（注文 ' + orderCount + ' 件）\n' +
+        '現在の台帳：記録 ' + events.length + ' 件\n\n' +
+        '現在の台帳は、対象ファイルの内容に置き換わります。';
+      if (!confirm(message)) return;
       events = saved;
       // 開いた台帳はファイルの内容そのものなので、未保存の更新はない状態になる
       unsaved = false;
       refresh();
-      show('保存済みの台帳を開きました。');
+      show('保存済みの台帳を開きました。' + file.name + '（記録 ' + saved.length + ' 件）');
     } catch (error) {
       show('台帳を開けませんでした。' + error.message, true);
     } finally {
