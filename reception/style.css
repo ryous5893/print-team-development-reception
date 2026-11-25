@@ -68,3 +68,5 @@ input[type="checkbox"] { width: auto; }
 
 .unchanged { color: #725100; background: #fff4cb; font-size: .85rem; padding: .2rem; }
 .unchanged[hidden] { display: none; }
+
+.changed { background: #fff4cb; font-weight: 700; }
