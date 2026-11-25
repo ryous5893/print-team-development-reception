@@ -316,6 +316,26 @@
       };
       badge.className = 'order-status order-status--' + (colors[status] || 'neutral');
       row.children[5].firstChild.replaceWith(badge);
+      const sourceForContact = events.find(event => event.type === 'order' && event.orderId === order.id);
+      const contact = element('details');
+      contact.append(element('summary', '確定納期の顧客連絡記録'));
+      if (order.approved) {
+        const dateLabel = element('label', '連絡日時');
+        const date = element('input'); date.type = 'datetime-local'; date.required = true;
+        date.value = sourceForContact.salesContact?.date || '';
+        const methodLabel = element('label', '連絡方法');
+        const method = select('contactMethod', ['電話', 'メール', '店頭', 'その他'].map(value => [value, value]));
+        method.required = true; method.value = sourceForContact.salesContact?.method || '';
+        const saveContact = element('button', '連絡記録を保存'); saveContact.type = 'button';
+        saveContact.addEventListener('click', () => {
+          if (!date.reportValidity() || !method.reportValidity()) return;
+          sourceForContact.salesContact = { date: date.value, method: method.value };
+          hasUnsavedChanges = true;
+          show('注文 ' + order.id + ' の顧客連絡を記録しました。閉じる前に台帳を保存してください。');
+        });
+        dateLabel.append(date); methodLabel.append(method); contact.append(dateLabel, methodLabel, saveContact);
+      } else contact.append(element('p', '製造承認後に連絡を記録できます。'));
+      row.children[4].append(contact);
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
