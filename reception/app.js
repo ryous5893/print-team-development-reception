@@ -199,6 +199,12 @@
       for (const field of definition.fields) {
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
       }
+      // RQ-005: 古い変更の承認を上書きしなかった場合は、その旨を履歴の内容に残す
+      const repliedRequest = event.type === 'reply' ? state.requests.get(event.requestId) : null;
+      if (repliedRequest && repliedRequest.superseded) {
+        metadata.append(element('dt', '適用'),
+          element('dd', repliedRequest.supersededNote || '後に受け付けた変更が承認済みのため、この承認では上書きしませんでした。'));
+      }
       detail.append(metadata);
       const detailCell = element('td');
       detailCell.append(detail);

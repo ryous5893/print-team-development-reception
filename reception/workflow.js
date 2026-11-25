@@ -104,24 +104,40 @@
     if (event.type === 'reply') {
       requireThat(request && request.orderId === order.id && !request.answer, '該当する未回答の依頼がありません。');
       const approved = event.decision === '承認';
+      // RQ-005: 最後に受け付けた変更を基準にする。
+      // 自分より後に受け付けた変更が既に承認（適用）済みの場合、その変更が基準なので、
+      // 古い変更の承認を取り込んでも注文の用紙・部数・納期を上書きしない。
+      // 承認イベント自体は取り込んで履歴に残し、上書きしなかったことを記録する。
+      const requestsInOrder = [...state.requests.values()];
+      const supersededByLaterChange = approved && request.type === 'change' &&
+        requestsInOrder.slice(requestsInOrder.indexOf(request) + 1).some(other =>
+          other.orderId === order.id && other.type === 'change' &&
+          other.answer === '承認' && !other.superseded);
       if (approved && request.type !== 'order') {
         requireThat(availableOrder(order), 'キャンセル済みの注文は承認できません。');
       }
       if (approved && request.type === 'change') {
         requireThat(!order.initialFinished, '当初分の製造完了後は注文変更を承認できません。');
-        order.paper = request.paper;
-        order.quantity = Number(request.quantity);
-        state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
+        if (!supersededByLaterChange) {
+          order.paper = request.paper;
+          order.quantity = Number(request.quantity);
+          state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
+        }
       }
       if (approved && request.type === 'cancel') {
         requireThat(!order.initialFinished, '当初分の製造完了後はキャンセルを承認できません。');
         order.cancelled = true;
       }
       if (approved && request.type === 'order') order.approved = true;
-      if (approved && ['order', 'change'].includes(request.type)) {
+      if (approved && ['order', 'change'].includes(request.type) && !supersededByLaterChange) {
         order.dueDate = event.confirmedDueDate || request.dueDate;
       }
       request.answer = event.decision;
+      request.superseded = supersededByLaterChange;
+      if (supersededByLaterChange) {
+        request.supersededNote = '後に受け付けた変更が承認済みのため、この承認では上書きしませんでした。';
+        event.superseded = true;
+      }
       request.confirmedDueDate = event.confirmedDueDate || request.dueDate || '';
       request.answerReason = event.reason;
       return;
