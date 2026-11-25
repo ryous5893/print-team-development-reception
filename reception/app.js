@@ -18,6 +18,13 @@
   };
   let events = [];
   let state = workflow.buildState(events);
+  let hasUnsavedChanges = false;
+
+  window.addEventListener('beforeunload', event => {
+    if (!hasUnsavedChanges) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
 
   function element(tag, content) {
     const item = document.createElement(tag);
@@ -241,6 +248,7 @@
 
     try {
       events = workflow.mergeEvents(events, [item]).events;
+      hasUnsavedChanges = true;
       refresh();
       eventDownload(item);
       show(workflow.interfaces[type].name + 'を登録し、CSVを書き出しました。');
@@ -258,6 +266,7 @@
       const text = await file.text();
       const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
       events = result.events;
+      if (result.accepted > 0) hasUnsavedChanges = true;
       refresh();
       show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
     } catch (error) {
@@ -270,6 +279,7 @@
 
   $('save-backup').addEventListener('click', () => {
     download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events));
+    hasUnsavedChanges = false;
     show('台帳を保存しました。再開時は「台帳を開く」を使ってください。');
   });
 
@@ -281,6 +291,7 @@
       const saved = workflow.readBackup(department, await file.text());
       if (events.length && !confirm('現在の台帳を置き換えますか？')) return;
       events = saved;
+      hasUnsavedChanges = false;
       refresh();
       show('保存済みの台帳を開きました。');
     } catch (error) {
