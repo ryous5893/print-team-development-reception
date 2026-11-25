@@ -300,6 +300,31 @@
         }
       });
       row.children[0].append(copyId);
+      {
+      const source = events.find(event => event.type === 'order' && event.orderId === order.id);
+      const editor = element('details');
+      editor.append(element('summary', '顧客の連絡先'));
+      const phone = element('input');
+      phone.type = 'tel';
+      phone.value = source.salesCustomer?.phone ?? '';
+      const phoneLabel = element('label', '電話番号');
+      phoneLabel.append(phone);
+      const email = element('input');
+      email.type = 'email';
+      email.value = source.salesCustomer?.email ?? '';
+      const emailLabel = element('label', 'メールアドレス');
+      emailLabel.append(email);
+      const save = element('button', '保存');
+      save.type = 'button';
+      save.addEventListener('click', () => {
+        if (!phone.reportValidity() || !email.reportValidity()) return;
+        source.salesCustomer = { phone: phone.value.trim(), email: email.value.trim() };
+        hasUnsavedChanges = true;
+        show('注文 ' + order.id + ' の顧客の連絡先を台帳に記録しました。');
+      });
+      editor.append(phoneLabel, emailLabel, save);
+      row.children[1].append(editor);
+      }
       for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
         const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
           Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
