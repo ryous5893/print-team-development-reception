@@ -387,6 +387,12 @@
     }
     if (!drafts.length) rowMessage(list, 6, '下書きはありません。');
     $('draft-count').textContent = drafts.length + '件';
+    const sentToday = events.filter(event => {
+      if (event.type !== 'order' || !event.createdAt) return false;
+      const date = new Date(event.createdAt);
+      return Number.isFinite(date.getTime()) && new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10) === localDate();
+    }).length;
+    $('daily-counts').textContent = '本日の製造依頼済み：' + sentToday + '件 ／ 未送付下書き：' + drafts.length + '件';
   }
 
   $('save-draft').addEventListener('click', () => {
