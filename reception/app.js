@@ -337,6 +337,8 @@
       if (event.type === 'reply' && state.requests.get(event.requestId)?.superseded) {
         detail.append(element('p', '古い変更の承認のため、現在の注文は上書きしていません。'));
       }
+      if (event.type === 'proof') detail.append(element('p', '取り込み日時：' +
+        (event.receivedAt ? new Date(event.receivedAt).toLocaleString('ja-JP') : '不明（記録開始前）')));
       const metadata = element('dl');
       for (const field of definition.fields) {
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
