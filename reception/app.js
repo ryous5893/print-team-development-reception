@@ -235,11 +235,17 @@
 
   const orderFilters = [];
 
+  const orderPageSize = 25;
+  let orderPage = 1;
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
-    for (const order of [...state.orders.values()].reverse()) {
-      if (!orderFilters.every(filter => filter(order))) continue;
+    const matching = [...state.orders.values()].reverse().filter(order => orderFilters.every(filter => filter(order)));
+    const pageCount = Math.max(1, Math.ceil(matching.length / orderPageSize));
+    orderPage = Math.min(orderPage, pageCount);
+    const start = (orderPage - 1) * orderPageSize;
+    for (const order of matching.slice(start, start + orderPageSize)) {
       const row = element('tr');
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
@@ -349,7 +355,10 @@
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = list.querySelectorAll('tr:not(:has(.empty))').length + '件表示 ／ 全' + state.orders.size + '件';
+    $('order-count').textContent = matching.length + '件該当 ／ 全' + state.orders.size + '件';
+    $('order-page').textContent = orderPage + ' / ' + pageCount + 'ページ';
+    $('orders-prev').disabled = orderPage === 1;
+    $('orders-next').disabled = orderPage === pageCount;
   }
 
   function renderHistory() {
@@ -588,6 +597,14 @@
   }
   window.addEventListener('focus', updateTodayFilter);
   setInterval(updateTodayFilter, 1000);
+
+  $('orders-prev').addEventListener('click', () => { orderPage--; renderOrders(); });
+  $('orders-next').addEventListener('click', () => { orderPage++; renderOrders(); });
+  $('order-filters').addEventListener('change', () => {
+    if (orderPage === 1) return;
+    orderPage = 1;
+    renderOrders();
+  });
 
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
