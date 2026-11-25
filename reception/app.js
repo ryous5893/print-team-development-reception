@@ -179,6 +179,18 @@
         updateCount();
         label.append(count);
       }
+      if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
+        const mark = element('span', '● 現行値と同じ');
+        mark.className = 'unchanged';
+        mark.setAttribute('aria-live', 'polite');
+        const updateMark = () => {
+          mark.hidden = field === 'quantity' ? !input.value || Number(input.value) !== order.quantity : input.value !== String(order[field]);
+        };
+        input.addEventListener('input', updateMark);
+        input.addEventListener('change', updateMark);
+        updateMark();
+        label.append(mark);
+      }
       formFields.append(label);
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
