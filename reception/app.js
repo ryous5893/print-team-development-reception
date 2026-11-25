@@ -18,6 +18,29 @@
   };
   let events = [];
   let state = workflow.buildState(events);
+  // RQ-074: 出力処理中（ダウンロードの後片付けが終わる2秒間）は送信中として扱い、
+  // ボタンの無効化と合わせて二重送信を防ぐ
+  const outputGuardMs = 2000;
+  let sending = false;
+  // RQ-063: 台帳CSVに保存していない更新があるかどうか（ある間だけ離脱時に警告する）
+  let unsaved = false;
+  // RQ-088: 台帳を開く直前の台帳（戻し先）。{ events, unsaved } を丸ごと退避する
+  let previousLedger = null;
+  // RQ-106: 最後にフォーカス／入力した欄を覚えておき、CSV取り込み後に編集へ復帰できるようにする
+  let lastFieldFocus = { name: '', selectionStart: null, selectionEnd: null };
+  function isTextLike(el) {
+    return el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text'));
+  }
+  function markUnsaved() {
+    unsaved = true;
+    // 新しい更新が入ったら台帳保存の内容が変わるので、RQ-074の二重押しガード中でも
+    // 保存ボタンをすぐ押せる状態に戻す（savingBackup等は下で宣言されるが、呼ばれるのは初期化後）
+    if (savingBackup) {
+      savingBackup = false;
+      clearTimeout(savingBackupTimer);
+      $('save-backup').disabled = false;
+    }
+  }
 
   function element(tag, content) {
     const item = document.createElement(tag);
@@ -62,6 +85,12 @@
       return orders.filter(order => [...state.requests.values()].some(request =>
         request.orderId === order.id && !request.answer));
     }
+    // RQ-037: 訂正の対象は、完了済みの依頼がある注文だけを出す
+    if (type === 'finishCorrection') {
+      return orders.filter(order => [...state.requests.values()].some(request =>
+        request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
+        request.answer === '承認' && request.finished));
+    }
     return orders.filter(workflow.availableOrder);
   }
 
@@ -69,9 +98,11 @@
     return [...state.requests.values()]
       .filter(request => order && request.orderId === order.id)
       .filter(request => type === 'reply' ? !request.answer :
+        // RQ-037: 訂正は完了済みの依頼だけ、通常の完了報告は未完了の依頼だけを対象にする
+        type === 'finishCorrection' ? ['order', 'additional'].includes(request.type) && request.answer === '承認' && request.finished :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
-        (type === 'finish' ? request.targetQuantity + '部 · ' : '') + request.requestId]);
+        (type === 'finish' || type === 'finishCorrection' ? request.targetQuantity + '部 · ' : '') + request.requestId]);
   }
 
   function proofChoices(order) {
@@ -135,7 +166,7 @@
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
-    $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
+    $('save-event').disabled = sending || (type !== 'order' && orderChoices(type).length === 0);
   }
 
   function download(name, text) {
@@ -199,6 +230,12 @@
       for (const field of definition.fields) {
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
       }
+      // RQ-005: 古い変更の承認を上書きしなかった場合は、その旨を履歴の内容に残す
+      const repliedRequest = event.type === 'reply' ? state.requests.get(event.requestId) : null;
+      if (repliedRequest && repliedRequest.superseded) {
+        metadata.append(element('dt', '適用'),
+          element('dd', repliedRequest.supersededNote || '後に受け付けた変更が承認済みのため、この承認では上書きしませんでした。'));
+      }
       detail.append(metadata);
       const detailCell = element('td');
       detailCell.append(detail);
@@ -207,7 +244,15 @@
         const button = element('button', 'CSVを書き出す');
         button.type = 'button';
         button.className = 'secondary';
-        button.addEventListener('click', () => eventDownload(event));
+        // RQ-074: 再出力も処理中はボタンを無効化し、連続クリックでも1回だけ書き出す
+        let outputting = false;
+        button.addEventListener('click', () => {
+          if (outputting) return;
+          outputting = true;
+          button.disabled = true;
+          eventDownload(event);
+          setTimeout(() => { outputting = false; button.disabled = false; }, outputGuardMs);
+        });
         actionCell.append(button);
       } else {
         actionCell.textContent = '—';
@@ -217,6 +262,53 @@
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 5, 'やり取りはまだありません。');
+  }
+
+  // RQ-106: 再描画で編集中の入力が消えないよう、フォームの内容を退避／復元する
+  function captureFormInput() {
+    const values = {};
+    for (const el of $('fields').querySelectorAll('input, select, textarea')) {
+      if (el.name) values[el.name] = el.value;
+    }
+    const active = document.activeElement;
+    const activeInFields = active && $('fields').contains(active) && active.name ? active : null;
+    let selectionStart = null;
+    let selectionEnd = null;
+    if (activeInFields && isTextLike(activeInFields)) {
+      try { selectionStart = activeInFields.selectionStart; selectionEnd = activeInFields.selectionEnd; } catch {}
+    }
+    return {
+      type: $('operation').value, values,
+      activeName: activeInFields ? activeInFields.name : lastFieldFocus.name,
+      selectionStart: activeInFields ? selectionStart : lastFieldFocus.selectionStart,
+      selectionEnd: activeInFields ? selectionEnd : lastFieldFocus.selectionEnd
+    };
+  }
+
+  function restoreFormInput(snapshot) {
+    if (!snapshot || snapshot.type !== $('operation').value) return;
+    // 注文に紐づく選択肢（依頼・校正）は、選択中だった注文でフォームを作り直してから値を戻す
+    renderForm(snapshot.values.orderId || '');
+    for (const el of $('fields').querySelectorAll('input, select, textarea')) {
+      if (!el.name || !(el.name in snapshot.values)) continue;
+      const value = snapshot.values[el.name];
+      if (el.tagName === 'SELECT') {
+        // 取り込みで選択肢がなくなったものは無理に戻さない
+        if ([...el.options].some(option => option.value === value)) el.value = value;
+      } else {
+        el.value = value;
+      }
+    }
+    if (snapshot.activeName) {
+      const target = $('fields').querySelector('[name="' + snapshot.activeName + '"]');
+      if (target) {
+        target.focus();
+        if (isTextLike(target) && snapshot.selectionStart !== null) {
+          try { target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd); } catch {}
+        }
+        lastFieldFocus = { name: snapshot.activeName, selectionStart: snapshot.selectionStart, selectionEnd: snapshot.selectionEnd };
+      }
+    }
   }
 
   function refresh() {
@@ -229,22 +321,49 @@
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
 
+  // RQ-106: 編集中の欄とカーソル位置を記録しておく（ファイル選択でフォーカスが移っても戻せるように）
+  $('fields').addEventListener('focusin', event => {
+    if (event.target.name) lastFieldFocus = { name: event.target.name, selectionStart: null, selectionEnd: null };
+  });
+  $('fields').addEventListener('input', event => {
+    if (isTextLike(event.target) && event.target.name) {
+      try {
+        lastFieldFocus = { name: event.target.name, selectionStart: event.target.selectionStart, selectionEnd: event.target.selectionEnd };
+      } catch {}
+    }
+  });
+
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
-    const type = $('operation').value;
-    const data = Object.fromEntries(new FormData($('entry')));
-    const item = { eventId: identifier('EV'), type, ...data };
-    if (type === 'order') item.orderId = identifier('ORD');
-    if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
-    if (type === 'proof') item.proofId = identifier('PRF');
-    if (type === 'progress') item.updatedAt = new Date().toISOString();
-
+    // RQ-074: 処理中は再入させない（ボタンの無効化だけに頼らず、送信イベント自体も止める）
+    if (sending) return;
+    sending = true;
+    $('save-event').disabled = true;
     try {
+      const type = $('operation').value;
+      const data = Object.fromEntries(new FormData($('entry')));
+      const item = { eventId: identifier('EV'), type, ...data };
+      if (type === 'order') item.orderId = identifier('ORD');
+      if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
+      if (type === 'proof') item.proofId = identifier('PRF');
+      // RQ-055: 進捗と遅延は通知日時（updatedAt）を新旧判定に使うので、どちらも自動で付ける
+      if (type === 'progress' || type === 'delay') item.updatedAt = new Date().toISOString();
+
       events = workflow.mergeEvents(events, [item]).events;
+      markUnsaved();
       refresh();
       eventDownload(item);
       show(workflow.interfaces[type].name + 'を登録し、CSVを書き出しました。');
+      // 成功時は処理中扱いを続け、時間が経ったら通常の有効／無効の状態へ戻す
+      setTimeout(() => {
+        sending = false;
+        const currentType = $('operation').value;
+        $('save-event').disabled = currentType !== 'order' && orderChoices(currentType).length === 0;
+      }, outputGuardMs);
     } catch (error) {
+      // 失敗時はすぐ再操作できるように戻す（入力内容はそのまま残る）
+      sending = false;
+      $('save-event').disabled = false;
       show(error.message, true);
     }
   });
@@ -258,7 +377,12 @@
       const text = await file.text();
       const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
       events = result.events;
+      // 新規に取り込んだ分がある時だけ未保存にする（取り込み済みの再取り込みでは変えない）
+      if (result.accepted > 0) markUnsaved();
+      // RQ-106: 再描画の直前に入力を退避し、描画後に戻して編集を続けられるようにする
+      const snapshot = captureFormInput();
       refresh();
+      restoreFormInput(snapshot);
       show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
     } catch (error) {
       show('取り込みを中止しました。' + error.message, true);
@@ -268,9 +392,19 @@
     }
   });
 
+  // RQ-074: 台帳の保存ボタンも、処理中は無効化して連続クリックで重ねて書き出さない
+  // ただし RQ-063: 前回の保存後に新しい更新があった場合は、間隔が短くても保存できるようにする
+  let savingBackup = false;
+  let savingBackupTimer = null;
   $('save-backup').addEventListener('click', () => {
+    if (savingBackup && !unsaved) return;
+    savingBackup = true;
+    $('save-backup').disabled = true;
+    unsaved = false;
     download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events));
     show('台帳を保存しました。再開時は「台帳を開く」を使ってください。');
+    clearTimeout(savingBackupTimer);
+    savingBackupTimer = setTimeout(() => { savingBackup = false; $('save-backup').disabled = false; }, outputGuardMs);
   });
 
   $('backup').addEventListener('change', async event => {
@@ -279,15 +413,61 @@
     if (!file) return;
     try {
       const saved = workflow.readBackup(department, await file.text());
-      if (events.length && !confirm('現在の台帳を置き換えますか？')) return;
+      // RQ-044: 入れ替える直前に、対象ファイル名と件数を必ず確認する（現在の台帳が空でも出す）。
+      // キャンセルした場合は現在の台帳をそのまま保持する。
+      const orderCount = workflow.buildState(saved).orders.size;
+      const message = '台帳を入れ替えますか？\n\n' +
+        '対象ファイル：' + file.name + '\n' +
+        '件数：記録 ' + saved.length + ' 件（注文 ' + orderCount + ' 件）\n' +
+        '現在の台帳：記録 ' + events.length + ' 件\n\n' +
+        '現在の台帳は、対象ファイルの内容に置き換わります。';
+      if (!confirm(message)) return;
+      // RQ-088: 置き換える直前の台帳を退避しておき、誤って開いた場合に戻れるようにする
+      previousLedger = { events: [...events], unsaved };
       events = saved;
+      // 開いた台帳はファイルの内容そのものなので、未保存の更新はない状態になる
+      unsaved = false;
       refresh();
-      show('保存済みの台帳を開きました。');
+      updateRestoreButton();
+      show('保存済みの台帳を開きました。' + file.name + '（記録 ' + saved.length + ' 件）');
     } catch (error) {
       show('台帳を開けませんでした。' + error.message, true);
     } finally {
       input.value = '';
     }
+  });
+
+  // RQ-088: 「直前の台帳に戻す」ボタンを台帳の保存・再開の欄に追加する（app.js側で足すので両部署の画面で使える）
+  const restoreButton = element('button', '直前の台帳に戻す');
+  restoreButton.type = 'button';
+  restoreButton.className = 'secondary';
+  restoreButton.disabled = true;
+  $('backup').closest('section').append(restoreButton);
+  function updateRestoreButton() {
+    restoreButton.disabled = !previousLedger;
+  }
+  restoreButton.addEventListener('click', () => {
+    if (!previousLedger) return;
+    const message = '直前の台帳に戻しますか？\n\n' +
+      '戻す台帳：記録 ' + previousLedger.events.length + ' 件\n' +
+      '現在の台帳：記録 ' + events.length + ' 件\n\n' +
+      '現在の台帳は置き換わります。開いたファイルは、再度「台帳を開く」から読み込めます。';
+    if (!confirm(message)) return;
+    // 現在の台帳も退避し直すので、もう一度押せば開いた台帳へも行き来できる
+    const current = { events: [...events], unsaved };
+    events = previousLedger.events;
+    unsaved = previousLedger.unsaved;
+    previousLedger = current;
+    refresh();
+    show('直前の台帳に戻しました。');
+  });
+
+  // RQ-063: 未保存の更新がある間だけ、閉じる／再読み込みの前にブラウザの確認を出す。
+  // 保存済み・変更なしの場合は何もしない（警告しない）。
+  window.addEventListener('beforeunload', event => {
+    if (!unsaved) return;
+    event.preventDefault();
+    event.returnValue = '';
   });
 
   const guidance = $('csv-types');
