@@ -316,6 +316,19 @@
       };
       badge.className = 'order-status order-status--' + (colors[status] || 'neutral');
       row.children[5].firstChild.replaceWith(badge);
+      const copy = element('button', 'コピーして新規注文');
+      copy.type = 'button';
+      copy.className = 'secondary';
+      copy.addEventListener('click', () => {
+        rememberForm();
+        if (typeof activeDraftId !== 'undefined') activeDraftId = '';
+        $('operation').value = 'order';
+        formDrafts.set('order', { product: order.product, paper: order.paper, quantity: String(order.quantity), dueDate: order.dueDate });
+        restoreForm();
+        $('fields').querySelector('[name="quantity"]').focus();
+        show('注文 ' + order.id + ' をコピーしました。部数・希望納期を確認して登録してください。');
+      });
+      row.children[1].append(copy);
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
