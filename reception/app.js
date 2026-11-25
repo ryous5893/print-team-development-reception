@@ -19,6 +19,23 @@
   let events = [];
   let state = workflow.buildState(events);
   let hasUnsavedChanges = false;
+  const formDrafts = new Map();
+  let renderedOperation = '';
+
+  function rememberForm() {
+    if (renderedOperation) {
+      formDrafts.set(renderedOperation, Object.fromEntries(new FormData($('entry'))));
+    }
+  }
+
+  function restoreForm() {
+    const draft = formDrafts.get($('operation').value);
+    renderForm(draft?.orderId || '');
+    if (!draft) return;
+    for (const input of $('fields').querySelectorAll('[name]')) {
+      if (Object.hasOwn(draft, input.name)) input.value = draft[input.name];
+    }
+  }
 
   window.addEventListener('beforeunload', event => {
     if (!hasUnsavedChanges) return;
@@ -121,6 +138,7 @@
 
   function renderForm(selectedOrder = '') {
     const type = $('operation').value;
+    renderedOperation = type;
     const definition = workflow.interfaces[type];
     const order = state.orders.get(selectedOrder);
     const formFields = $('fields');
@@ -234,7 +252,10 @@
   }
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
-  $('operation').addEventListener('change', () => renderForm());
+  $('operation').addEventListener('change', () => {
+    rememberForm();
+    restoreForm();
+  });
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
@@ -249,6 +270,7 @@
     try {
       events = workflow.mergeEvents(events, [item]).events;
       hasUnsavedChanges = true;
+      formDrafts.delete(type);
       refresh();
       eventDownload(item);
       show(workflow.interfaces[type].name + 'を登録し、CSVを書き出しました。');
@@ -295,6 +317,7 @@
         (events.length ? '現在の台帳を置き換えます。' : 'この台帳で作業を開始します。'))) return;
       events = saved;
       hasUnsavedChanges = false;
+      formDrafts.clear();
       refresh();
       show('保存済みの台帳を開きました。');
     } catch (error) {
