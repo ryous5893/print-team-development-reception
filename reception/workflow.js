@@ -109,6 +109,7 @@
       }
       if (approved && request.type === 'change') {
         requireThat(!order.initialFinished, '当初分の製造完了後は注文変更を承認できません。');
+        request.beforeChange = { paper: order.paper, quantity: order.quantity, dueDate: order.dueDate };
         order.paper = request.paper;
         order.quantity = Number(request.quantity);
         state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
@@ -120,6 +121,9 @@
       if (approved && request.type === 'order') order.approved = true;
       if (approved && ['order', 'change'].includes(request.type)) {
         order.dueDate = event.confirmedDueDate || request.dueDate;
+      }
+      if (approved && request.type === 'change') {
+        request.afterChange = { paper: order.paper, quantity: order.quantity, dueDate: order.dueDate };
       }
       request.answer = event.decision;
       request.confirmedDueDate = event.confirmedDueDate || request.dueDate || '';
