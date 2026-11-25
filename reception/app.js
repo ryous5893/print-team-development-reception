@@ -303,6 +303,8 @@
         }
         detail.append(comparison);
       }
+      if (event.type === 'proof') detail.append(element('p', '取り込み日時：' +
+        (event.receivedAt ? new Date(event.receivedAt).toLocaleString('ja-JP') : '不明（記録開始前）')));
       const metadata = element('dl');
       for (const field of definition.fields) {
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
@@ -423,7 +425,8 @@
     try {
       const text = await file.text();
       kind = csvKind(text);
-      const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
+      const result = workflow.mergeEvents(events, workflow.readExchange(text, department).map(item =>
+        item.type === 'proof' ? { ...item, receivedAt: new Date().toISOString() } : item));
       events = result.events;
       if (result.accepted > 0) hasUnsavedChanges = true;
       refresh();
