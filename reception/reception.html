@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>受注管理ツール｜営業部</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="workflow.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body data-department="sales">
+  <header>
+    <p>あかぎ印刷 ／ 営業部</p>
+    <h1>受注管理ツール</h1>
+  </header>
+  <main>
+    <details class="guide">
+      <summary>使い方とCSVの種類</summary>
+      <p>「製造依頼」を記入して書き出し、製造部へCSVを渡します。製造部から返る「依頼回答」CSVを取り込むと、注文の状態が変わります。</p>
+      <p>校正を行う場合は、製造部の校正確認依頼と営業部の校正回答を交換します。製造部は進捗・遅延・完了を必要に応じて書き出し、営業部に渡します。</p>
+      <p>データは開いている画面で保持します。閉じる前に台帳を保存し、再開時に開き直してください。</p>
+      <ul id="csv-types"></ul>
+    </details>
+
+    <div class="workspace">
+      <section aria-labelledby="entry-title">
+        <h2 id="entry-title">相手部署に渡すCSV</h2>
+        <form id="entry">
+          <label>やり取りの種類
+            <select id="operation"></select>
+          </label>
+          <p id="action-help" class="hint"></p>
+          <div id="fields"></div>
+          <button id="save-event" type="submit">登録してCSVを書き出す</button>
+        </form>
+      </section>
+      <div class="io-section">
+        <section aria-labelledby="import-title">
+          <h2 id="import-title">相手部署からのCSV</h2>
+          <label>取り込むファイル
+            <input id="incoming" type="file" accept=".csv,text/csv">
+          </label>
+        </section>
+        <section aria-labelledby="backup-title">
+          <h2 id="backup-title">作業の保存・再開</h2>
+          <button id="save-backup" type="button" class="secondary">台帳をCSVで保存</button>
+          <label>台帳を開く
+            <input id="backup" type="file" accept=".csv,text/csv">
+          </label>
+        </section>
+      </div>
+    </div>
+
+    <p id="message" role="status" aria-live="polite">CSVの処理結果をここに表示します。</p>
+
+    <section aria-labelledby="orders-title">
+      <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
+      <div class="table-wrap">
+        <table aria-labelledby="orders-title">
+          <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">納期</th><th scope="col">状態</th><th scope="col">校正</th><th scope="col">完了見込み</th><th scope="col">遅延理由</th><th scope="col">良品累計</th></tr></thead>
+          <tbody id="orders"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="history-title">
+      <h2 id="history-title">やり取り履歴</h2>
+      <div class="table-wrap">
+        <table aria-labelledby="history-title">
+          <thead><tr><th scope="col">方向</th><th scope="col">種類</th><th scope="col">注文ID</th><th scope="col">内容</th><th scope="col">再出力</th></tr></thead>
+          <tbody id="history"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
