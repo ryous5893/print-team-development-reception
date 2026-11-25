@@ -224,6 +224,7 @@
     document.body.append(link);
     link.click();
     link.remove();
+    $('last-export').textContent = '最後に書き出したCSV：' + name;
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
