@@ -309,6 +309,10 @@
       !confirm('希望納期 ' + data.dueDate + ' は過去日です。このまま登録しますか？')) return;
     if (type === 'order' && !confirm('製造依頼を登録しますか？\n品名：' + data.product +
       '\n用紙：' + data.paper + '\n部数：' + data.quantity + '部\n希望納期：' + data.dueDate)) return;
+    const selectedProof = state.proofs.get(data.proofId);
+    if (type === 'proofReply' && selectedProof && !confirm('校正回答を登録しますか？\n注文ID：' +
+      data.orderId + '\n品名：' + state.orders.get(data.orderId).product + '\n第' + selectedProof.version +
+      '版\n回答：' + data.proofDecision + '\n修正コメント：' + (data.comment || 'なし'))) return;
     const item = { eventId: identifier('EV'), type, ...data };
     if (type === 'order') item.orderId = identifier('ORD');
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
