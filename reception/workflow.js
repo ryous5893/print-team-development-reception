@@ -11,7 +11,7 @@
     reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason' },
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
-    delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
+    delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate updatedAt' },
     finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' }
   };
   for (const definition of Object.values(interfaces)) {
@@ -36,7 +36,11 @@
 
     for (const field of definition.fields) {
       const value = event[field];
+      // RQ-055: 遅延通知の通知日時（updatedAt）は今回追加した項目。
+      // 旧台帳に残る日時なしの遅延イベントだけは、欠けていても読み込めるようにする。
+      if (field === 'updatedAt' && event.type === 'delay' && typeof value !== 'string') continue;
       requireThat(typeof value === 'string', field + ' がありません。');
+      if (field === 'updatedAt' && event.type === 'delay' && value === '') continue;
       if (!optionalFields.includes(field)) {
         requireThat(value.trim(), field + ' は必須です。');
       }
@@ -65,6 +69,9 @@
     }
     if (event.type === 'progress') {
       requireThat(stages.includes(event.stage), '工程が不正です。');
+    }
+    // RQ-055: 進捗と遅延は通知日時（updatedAt）を新旧判定の基準にする
+    if (event.type === 'progress' || (event.type === 'delay' && event.updatedAt)) {
       requireThat(/^\d{4}-\d{2}-\d{2}T/.test(event.updatedAt) &&
         !isNaN(Date.parse(event.updatedAt)), '更新日時が不正です。');
     }
@@ -86,7 +93,8 @@
         id: event.orderId, originalRequestId: event.requestId, product: event.product,
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate,
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: ''
+        expectedDate: '', expectedDateAt: '', expectedDateLegacyDelay: false,
+        delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: ''
       });
     } else {
       requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
@@ -164,13 +172,36 @@
         if (!order.progressAt || Date.parse(event.updatedAt) >= Date.parse(order.progressAt)) {
           order.progressAt = event.updatedAt;
           order.progress = event.stage;
-          order.expectedDate = event.expectedDate;
+          // RQ-055: 見込み日は「通知日時が最新の通知」のものだけを現在値にする。
+          // 自分より新しい遅延／進捗が既に見込み日を決めている場合は上書きしない。
+          // イベント自体は履歴に残る。工程（stage）は従来どおり進捗同士の新旧で更新する。
+          if (!order.expectedDateLegacyDelay &&
+            (!order.expectedDateAt || Date.parse(event.updatedAt) >= Date.parse(order.expectedDateAt))) {
+            order.expectedDate = event.expectedDate;
+            order.expectedDateAt = event.updatedAt;
+          }
         }
         break;
-      case 'delay':
-        order.delayReason = event.reason;
-        order.expectedDate = event.expectedDate;
+      case 'delay': {
+        // RQ-055: 遅延も通知日時で新旧を判定する（進捗と同じ基準）。
+        if (!event.updatedAt) {
+          // 旧形式（通知日時なし）の遅延は新旧を判定できないため、
+          // 取り込んだ時点で最新として扱い、その見込み日を後の進捗で上書きしない。
+          // 日時ありの通知が次に来れば、そちらの判定に切り替わる。
+          order.delayReason = event.reason;
+          order.expectedDate = event.expectedDate;
+          order.expectedDateLegacyDelay = true;
+          break;
+        }
+        if (order.expectedDateLegacyDelay || !order.expectedDateAt ||
+          Date.parse(event.updatedAt) >= Date.parse(order.expectedDateAt)) {
+          order.delayReason = event.reason;
+          order.expectedDate = event.expectedDate;
+          order.expectedDateAt = event.updatedAt;
+          order.expectedDateLegacyDelay = false;
+        }
         break;
+      }
       case 'finish':
         requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
           request.answer === '承認' && !request.finished, '承認済みで未完了の製造依頼を選んでください。');
@@ -188,7 +219,8 @@
   }
 
   function eventValues(event) {
-    return ['eventId', 'type', ...interfaces[event.type].fields].map(field => event[field]);
+    // 旧形式のイベントで後から追加された項目（遅延の updatedAt 等）が無くても書き出せるようにする
+    return ['eventId', 'type', ...interfaces[event.type].fields].map(field => event[field] ?? '');
   }
 
   function buildState(events) {
