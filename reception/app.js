@@ -269,6 +269,22 @@
         show('注文 ' + order.id + ' をコピーしました。部数・希望納期を確認して登録してください。');
       });
       row.children[1].append(copy);
+      const source = events.find(event => event.type === 'order' && event.orderId === order.id);
+      const memo = element('details');
+      memo.append(element('summary', '社内メモ'));
+      const memoLabel = element('label', '担当交代用の社内メモ');
+      const input = element('textarea');
+      input.value = source.salesNote || '';
+      const save = element('button', 'メモを保存');
+      save.type = 'button';
+      save.addEventListener('click', () => {
+        source.salesNote = input.value;
+        hasUnsavedChanges = true;
+        show('注文 ' + order.id + ' のメモを保存しました。閉じる前に台帳を保存してください。');
+      });
+      memoLabel.append(input);
+      memo.append(memoLabel, save);
+      row.children[1].append(memo);
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
