@@ -305,6 +305,8 @@
     event.preventDefault();
     const type = $('operation').value;
     const data = Object.fromEntries(new FormData($('entry')));
+    if (data.dueDate && data.dueDate < localDate() &&
+      !confirm('希望納期 ' + data.dueDate + ' は過去日です。このまま登録しますか？')) return;
     const item = { eventId: identifier('EV'), type, ...data };
     if (type === 'order') item.orderId = identifier('ORD');
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
