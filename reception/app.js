@@ -500,6 +500,8 @@
     }
   });
 
+  orderFilters.push(order => !$('shortage-only').checked || (order.initialFinished && order.goodQuantity < order.quantity));
+  $('shortage-only').addEventListener('change', renderOrders);
   orderFilters.push(order => !$('due-today').checked || order.dueDate === localDate());
   $('due-today').addEventListener('change', renderOrders);
 
