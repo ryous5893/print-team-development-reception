@@ -245,6 +245,15 @@
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
       row.append(...values.map(value => element('td', value)));
+      const status = statusOf(order);
+      const badge = element('span', status);
+      const colors = {
+        'キャンセル済み': 'neutral', '製造依頼却下': 'danger', '製造承認待ち': 'waiting',
+        '製造承認済み': 'progress', '準備中': 'progress', '印刷中': 'progress',
+        '加工中': 'progress', '検品中': 'progress', '完了・不足あり': 'waiting', '完了': 'done'
+      };
+      badge.className = 'order-status order-status--' + (colors[status] || 'neutral');
+      row.children[5].replaceChildren(badge);
       for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
         const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
           Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
