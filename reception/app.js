@@ -316,6 +316,22 @@
       };
       badge.className = 'order-status order-status--' + (colors[status] || 'neutral');
       row.children[5].firstChild.replaceWith(badge);
+      const timeline = element('details');
+      timeline.append(element('summary', 'この注文の依頼・回答を見る'));
+      timeline.append(element('p', '台帳の受付順（古いものから表示）'));
+      const entries = element('ol');
+      for (const event of events.filter(item => item.orderId === order.id)) {
+        const entry = element('li', workflow.interfaces[event.type].name + ' · ' +
+          (event.requestId || event.proofId || event.eventId));
+        const contents = element('dl');
+        for (const field of workflow.interfaces[event.type].fields) {
+          contents.append(element('dt', fields[field]?.[0] || field), element('dd', event[field] || '—'));
+        }
+        entry.append(contents);
+        entries.append(entry);
+      }
+      timeline.append(entries);
+      row.children[5].append(timeline);
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
