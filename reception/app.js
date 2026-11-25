@@ -137,6 +137,9 @@
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
       input.value = last ? Number(last.version) + 1 : 1;
     }
+    if (type === 'additional' && field === 'quantity' && order?.initialFinished && order.quantity > order.goodQuantity) {
+      input.value = order.quantity - order.goodQuantity;
+    }
     if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
       input.value = order[field];
     }
