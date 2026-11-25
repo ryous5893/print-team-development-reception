@@ -576,6 +576,19 @@
 
   orderFilters.push(order => !$('proof-this-week').checked || proofDueThisWeek(order));
   $('proof-this-week').addEventListener('change', renderOrders);
+  orderFilters.push(order => !$('due-today').checked || order.dueDate === localDate());
+  $('due-today').addEventListener('change', renderOrders);
+
+  let previousDate = localDate();
+  function updateTodayFilter() {
+    const today = localDate();
+    if (today === previousDate) return;
+    previousDate = today;
+    if ($('due-today').checked) renderOrders();
+  }
+  window.addEventListener('focus', updateTodayFilter);
+  setInterval(updateTodayFilter, 1000);
+
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
     const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +
