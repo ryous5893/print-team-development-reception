@@ -535,6 +535,16 @@
   orderFilters.push(order => $('show-cancelled').checked || !order.cancelled);
   $('show-cancelled').addEventListener('change', renderOrders);
   $('history-order').addEventListener('change', renderHistory);
+  function proofDueThisWeek(order) {
+    const today = new Date(localDate() + 'T00:00:00Z');
+    const monday = new Date(today); monday.setUTCDate(today.getUTCDate() - (today.getUTCDay() + 6) % 7);
+    const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate() + 6);
+    return [...state.proofs.values()].some(proof => proof.orderId === order.id && !proof.answer &&
+      proof.responseDueDate >= monday.toISOString().slice(0, 10) && proof.responseDueDate <= sunday.toISOString().slice(0, 10));
+  }
+
+  orderFilters.push(order => !$('proof-this-week').checked || proofDueThisWeek(order));
+  $('proof-this-week').addEventListener('change', renderOrders);
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
     const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +
