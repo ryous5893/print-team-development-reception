@@ -17,36 +17,30 @@
     shortageQuantity: ['不足部数', 'number']
   };
   let events = [];
-  let drafts = [];
-  let activeDraftId = '';
   let state = workflow.buildState(events);
-  let hasUnsavedChanges = false;
-  const formDrafts = new Map();
-  let renderedOperation = '';
-
-  function rememberForm() {
-    if (renderedOperation) {
-      formDrafts.set(renderedOperation, Object.fromEntries(new FormData($('entry'))));
+  // RQ-074: 出力処理中（ダウンロードの後片付けが終わる2秒間）は送信中として扱い、
+  // ボタンの無効化と合わせて二重送信を防ぐ
+  const outputGuardMs = 2000;
+  let sending = false;
+  // RQ-063: 台帳CSVに保存していない更新があるかどうか（ある間だけ離脱時に警告する）
+  let unsaved = false;
+  // RQ-088: 台帳を開く直前の台帳（戻し先）。{ events, unsaved } を丸ごと退避する
+  let previousLedger = null;
+  // RQ-106: 最後にフォーカス／入力した欄を覚えておき、CSV取り込み後に編集へ復帰できるようにする
+  let lastFieldFocus = { name: '', selectionStart: null, selectionEnd: null };
+  function isTextLike(el) {
+    return el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text'));
+  }
+  function markUnsaved() {
+    unsaved = true;
+    // 新しい更新が入ったら台帳保存の内容が変わるので、RQ-074の二重押しガード中でも
+    // 保存ボタンをすぐ押せる状態に戻す（savingBackup等は下で宣言されるが、呼ばれるのは初期化後）
+    if (savingBackup) {
+      savingBackup = false;
+      clearTimeout(savingBackupTimer);
+      $('save-backup').disabled = false;
     }
   }
-
-  function restoreForm() {
-    const draft = formDrafts.get($('operation').value);
-    renderForm(draft?.orderId || '');
-    if (!draft) return;
-    for (const input of $('fields').querySelectorAll('[name]')) {
-      if (Object.hasOwn(draft, input.name)) {
-        input.value = draft[input.name];
-        input.dispatchEvent(new Event('input'));
-      }
-    }
-  }
-
-  window.addEventListener('beforeunload', event => {
-    if (!hasUnsavedChanges) return;
-    event.preventDefault();
-    event.returnValue = '';
-  });
 
   function element(tag, content) {
     const item = document.createElement(tag);
@@ -75,21 +69,6 @@
     $('message').dataset.error = String(error);
   }
 
-  function csvKind(text) {
-    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
-    const header = lines[0].replaceAll('"', '');
-    if (header === 'department,event') {
-      try { workflow.readBackup(department, text); return '自部署の台帳CSV（「台帳を開く」用）'; }
-      catch { return '台帳CSV（部署・内容を確認してください）'; }
-    }
-    if (header.startsWith('eventId,type,')) {
-      const type = (lines[1] || '').split(',')[1]?.replaceAll('"', '');
-      const definition = Object.hasOwn(workflow.interfaces, type) && workflow.interfaces[type];
-      if (definition) return (definition.from === department ? '自部署から送る' : '相手部署からの') + definition.name + 'CSV';
-    }
-    return '形式不明のCSV';
-  }
-
   function localDate() {
     const now = new Date();
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -106,6 +85,12 @@
       return orders.filter(order => [...state.requests.values()].some(request =>
         request.orderId === order.id && !request.answer));
     }
+    // RQ-037: 訂正の対象は、完了済みの依頼がある注文だけを出す
+    if (type === 'finishCorrection') {
+      return orders.filter(order => [...state.requests.values()].some(request =>
+        request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
+        request.answer === '承認' && request.finished));
+    }
     return orders.filter(workflow.availableOrder);
   }
 
@@ -113,9 +98,11 @@
     return [...state.requests.values()]
       .filter(request => order && request.orderId === order.id)
       .filter(request => type === 'reply' ? !request.answer :
+        // RQ-037: 訂正は完了済みの依頼だけ、通常の完了報告は未完了の依頼だけを対象にする
+        type === 'finishCorrection' ? ['order', 'additional'].includes(request.type) && request.answer === '承認' && request.finished :
         ['order', 'additional'].includes(request.type) && request.answer === '承認' && !request.finished)
       .map(request => [request.requestId, workflow.interfaces[request.type].name + ' · ' +
-        (type === 'finish' ? request.targetQuantity + '部 · ' : '') + request.requestId]);
+        (type === 'finish' || type === 'finishCorrection' ? request.targetQuantity + '部 · ' : '') + request.requestId]);
   }
 
   function proofChoices(order) {
@@ -132,8 +119,7 @@
   function inputFor(type, field, order) {
     const [, kind] = fields[field];
     if (field === 'orderId') {
-      return select(field, orderChoices(type).map(item => [item.id,
-        item.product + ' · ' + item.quantity + '部 · 納期 ' + item.dueDate + ' · ' + item.id]));
+      return select(field, orderChoices(type).map(item => [item.id, item.product + ' · ' + item.id]));
     }
     if (field === 'requestId') return select(field, requestChoices(type, order));
     if (field === 'proofId') return select(field, proofChoices(order));
@@ -151,9 +137,6 @@
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
       input.value = last ? Number(last.version) + 1 : 1;
     }
-    if (type === 'additional' && field === 'quantity' && order?.initialFinished && order.quantity > order.goodQuantity) {
-      input.value = order.quantity - order.goodQuantity;
-    }
     if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
       input.value = order[field];
     }
@@ -162,7 +145,6 @@
 
   function renderForm(selectedOrder = '') {
     const type = $('operation').value;
-    renderedOperation = type;
     const definition = workflow.interfaces[type];
     const order = state.orders.get(selectedOrder);
     const formFields = $('fields');
@@ -180,24 +162,11 @@
         formFields.querySelector('[name="orderId"]').focus();
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
-      if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
-        const mark = element('span', '● 現行値と同じ');
-        mark.className = 'unchanged';
-        mark.setAttribute('aria-live', 'polite');
-        const updateMark = () => {
-          mark.hidden = field === 'quantity' ? !input.value || Number(input.value) !== order.quantity : input.value !== String(order[field]);
-        };
-        input.addEventListener('input', updateMark);
-        input.addEventListener('change', updateMark);
-        updateMark();
-        label.append(mark);
-      }
       formFields.append(label);
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
       '対象の注文を選択してください。関連する依頼や校正は注文を選ぶと表示されます。';
-    $('save-event').disabled = type !== 'order' && orderChoices(type).length === 0;
-    $('save-draft').hidden = type !== 'order';
+    $('save-event').disabled = sending || (type !== 'order' && orderChoices(type).length === 0);
   }
 
   function download(name, text) {
@@ -233,142 +202,39 @@
     tableBody.append(row);
   }
 
-  const orderFilters = [];
-
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
     for (const order of [...state.orders.values()].reverse()) {
-      if (!orderFilters.every(filter => filter(order))) continue;
       const row = element('tr');
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
       row.append(...values.map(value => element('td', value)));
-      for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
-        const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
-          Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
-        row.children[5].append(element('p', workflow.interfaces[request.type].name + '：未回答 ' + elapsed));
-      }
-      const approvedRequest = [...state.requests.values()].filter(request => request.orderId === order.id &&
-        ['order', 'change'].includes(request.type) && request.answer === '承認' && !request.superseded).at(-1);
-      if (approvedRequest) {
-        const difference = Math.round((Date.parse(approvedRequest.confirmedDueDate) - Date.parse(approvedRequest.dueDate)) / 86400000);
-        const comparison = element('p', '希望 ' + approvedRequest.dueDate + ' → 確定 ' + approvedRequest.confirmedDueDate +
-          '（' + (difference > 0 ? '+' : '') + difference + '日）');
-        if (difference) comparison.className = 'attention';
-        row.children[4].append(comparison);
-      }
-      const cancellation = [...state.requests.values()].filter(request => request.orderId === order.id && request.type === 'cancel').at(-1);
-      if (cancellation) row.children[5].append(element('p', '製造側の取消確認：' +
-        (cancellation.answer === '承認' ? '確認済み' : cancellation.answer === '却下' ? '却下' : '確認待ち')));
-      const copy = element('button', 'コピーして新規注文');
-      copy.type = 'button';
-      copy.className = 'secondary';
-      copy.addEventListener('click', () => {
-        rememberForm();
-        if (typeof activeDraftId !== 'undefined') activeDraftId = '';
-        $('operation').value = 'order';
-        formDrafts.set('order', { product: order.product, paper: order.paper, quantity: String(order.quantity), dueDate: order.dueDate });
-        restoreForm();
-        $('fields').querySelector('[name="quantity"]').focus();
-        show('注文 ' + order.id + ' をコピーしました。部数・希望納期を確認して登録してください。');
-      });
-      row.children[1].append(copy);
-      const source = events.find(event => event.type === 'order' && event.orderId === order.id);
-      const memo = element('details');
-      memo.append(element('summary', '社内メモ'));
-      const memoLabel = element('label', '担当交代用の社内メモ');
-      const input = element('textarea');
-      input.value = source.salesNote || '';
-      const save = element('button', 'メモを保存');
-      save.type = 'button';
-      save.addEventListener('click', () => {
-        source.salesNote = input.value;
-        hasUnsavedChanges = true;
-        show('注文 ' + order.id + ' のメモを保存しました。閉じる前に台帳を保存してください。');
-      });
-      memoLabel.append(input);
-      memo.append(memoLabel, save);
-      row.children[1].append(memo);
-      const timeline = element('details');
-      timeline.append(element('summary', 'この注文の依頼・回答を見る'));
-      timeline.append(element('p', '台帳の受付順（古いものから表示）'));
-      const entries = element('ol');
-      for (const event of events.filter(item => item.orderId === order.id)) {
-        const entry = element('li', workflow.interfaces[event.type].name + ' · ' +
-          (event.requestId || event.proofId || event.eventId));
-        const contents = element('dl');
-        for (const field of workflow.interfaces[event.type].fields) {
-          contents.append(element('dt', fields[field]?.[0] || field), element('dd', event[field] || '—'));
-        }
-        entry.append(contents);
-        entries.append(entry);
-      }
-      timeline.append(entries);
-      row.children[5].append(timeline);
-      const sourceForContact = events.find(event => event.type === 'order' && event.orderId === order.id);
-      const contact = element('details');
-      contact.append(element('summary', '確定納期の顧客連絡記録'));
-      if (order.approved) {
-        const dateLabel = element('label', '連絡日時');
-        const date = element('input'); date.type = 'datetime-local'; date.required = true;
-        date.value = sourceForContact.salesContact?.date || '';
-        const methodLabel = element('label', '連絡方法');
-        const method = select('contactMethod', ['電話', 'メール', '店頭', 'その他'].map(value => [value, value]));
-        method.required = true; method.value = sourceForContact.salesContact?.method || '';
-        const save = element('button', '連絡記録を保存'); save.type = 'button';
-        save.addEventListener('click', () => {
-          if (!date.reportValidity() || !method.reportValidity()) return;
-          sourceForContact.salesContact = { date: date.value, method: method.value };
-          hasUnsavedChanges = true;
-          show('注文 ' + order.id + ' の顧客連絡を記録しました。閉じる前に台帳を保存してください。');
-        });
-        dateLabel.append(date); methodLabel.append(method); contact.append(dateLabel, methodLabel, save);
-      } else contact.append(element('p', '製造承認後に連絡を記録できます。'));
-      row.children[4].append(contact);
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = list.querySelectorAll('tr:not(:has(.empty))').length + '件表示 ／ 全' + state.orders.size + '件';
+    $('order-count').textContent = state.orders.size + '件';
   }
 
   function renderHistory() {
     const list = $('history');
     list.replaceChildren();
-    const selectedOrder = $('history-order').value;
-    $('history-order').replaceChildren(option('', '全注文'), ...[...state.orders.values()].map(order => option(order.id, order.id + ' · ' + order.product)));
-    $('history-order').value = state.orders.has(selectedOrder) ? selectedOrder : '';
     for (const event of [...events].reverse()) {
-      if ($('history-order').value && event.orderId !== $('history-order').value) continue;
       const definition = workflow.interfaces[event.type];
       const sent = definition.from === department;
       const row = element('tr');
       const detail = element('details');
       detail.append(element('summary', '内容を見る'));
-      const changeRequest = event.type === 'reply' && state.requests.get(event.requestId);
-      if (changeRequest?.beforeChange && changeRequest.afterChange) {
-        const comparison = element('table');
-        comparison.append(element('caption', '承認済み変更の前後'));
-        const header = element('tr');
-        header.append(...['項目', '変更前', '変更後'].map(value => element('th', value)));
-        comparison.append(header);
-        for (const field of ['quantity', 'paper', 'dueDate']) {
-          const row = element('tr');
-          row.append(...[fields[field][0], changeRequest.beforeChange[field], changeRequest.afterChange[field]].map(value => element('td', value)));
-          if (changeRequest.beforeChange[field] !== changeRequest.afterChange[field]) row.className = 'changed';
-          comparison.append(row);
-        }
-        detail.append(comparison);
-      }
-      if (event.type === 'proof') detail.append(element('p', '取り込み日時：' +
-        (event.receivedAt ? new Date(event.receivedAt).toLocaleString('ja-JP') : '不明（記録開始前）')));
-      if (event.type === 'reply' && state.requests.get(event.requestId)?.superseded) {
-        detail.append(element('p', '古い変更の承認のため、現在の注文は上書きしていません。'));
-      }
       const metadata = element('dl');
       for (const field of definition.fields) {
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
+      }
+      // RQ-005: 古い変更の承認を上書きしなかった場合は、その旨を履歴の内容に残す
+      const repliedRequest = event.type === 'reply' ? state.requests.get(event.requestId) : null;
+      if (repliedRequest && repliedRequest.superseded) {
+        metadata.append(element('dt', '適用'),
+          element('dd', repliedRequest.supersededNote || '後に受け付けた変更が承認済みのため、この承認では上書きしませんでした。'));
       }
       detail.append(metadata);
       const detailCell = element('td');
@@ -378,8 +244,16 @@
         const button = element('button', 'CSVを書き出す');
         button.type = 'button';
         button.className = 'secondary';
-        button.addEventListener('click', () => eventDownload(event));
-        actionCell.append(element('p', event.type + '-' + event.orderId + '-' + event.eventId + '.csv'), button);
+        // RQ-074: 再出力も処理中はボタンを無効化し、連続クリックでも1回だけ書き出す
+        let outputting = false;
+        button.addEventListener('click', () => {
+          if (outputting) return;
+          outputting = true;
+          button.disabled = true;
+          eventDownload(event);
+          setTimeout(() => { outputting = false; button.disabled = false; }, outputGuardMs);
+        });
+        actionCell.append(button);
       } else {
         actionCell.textContent = '—';
       }
@@ -390,95 +264,122 @@
     if (!list.children.length) rowMessage(list, 5, 'やり取りはまだありません。');
   }
 
-  function renderDrafts() {
-    const list = $('drafts');
-    list.replaceChildren();
-    for (const draft of drafts) {
-      const row = element('tr');
-      row.append(...['下書き', draft.product || '未入力', draft.paper || '未入力',
-        draft.quantity ? draft.quantity + '部' : '未入力', draft.dueDate || '未入力']
-        .map(value => element('td', value)));
-      const action = element('td');
-      const edit = element('button', '編集・製造依頼へ');
-      edit.type = 'button';
-      edit.addEventListener('click', () => {
-        rememberForm();
-        activeDraftId = draft.id;
-        $('operation').value = 'order';
-        formDrafts.set('order', draft);
-        restoreForm();
-        $('fields').querySelector('[name="product"]').focus();
-        show('下書きを開きました。内容を確認し、登録すると製造依頼を書き出します。');
-      });
-      action.append(edit);
-      row.append(action);
-      list.append(row);
+  // RQ-085: 操作種類ごとの記入途中の内容（種類を切り替えて戻ってきた時に復元する）
+  const formDrafts = new Map();
+
+  // RQ-106: 再描画で編集中の入力が消えないよう、フォームの内容を退避／復元する
+  function captureFormInput() {
+    const values = {};
+    for (const el of $('fields').querySelectorAll('input, select, textarea')) {
+      if (el.name) values[el.name] = el.value;
     }
-    if (!drafts.length) rowMessage(list, 6, '下書きはありません。');
-    $('draft-count').textContent = drafts.length + '件';
-    const sentToday = events.filter(event => {
-      if (event.type !== 'order' || !event.createdAt) return false;
-      const date = new Date(event.createdAt);
-      return Number.isFinite(date.getTime()) && new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10) === localDate();
-    }).length;
-    $('daily-counts').textContent = '本日の製造依頼済み：' + sentToday + '件 ／ 未送付下書き：' + drafts.length + '件';
+    const active = document.activeElement;
+    const activeInFields = active && $('fields').contains(active) && active.name ? active : null;
+    let selectionStart = null;
+    let selectionEnd = null;
+    if (activeInFields && isTextLike(activeInFields)) {
+      try { selectionStart = activeInFields.selectionStart; selectionEnd = activeInFields.selectionEnd; } catch {}
+    }
+    return {
+      type: $('operation').value, values,
+      activeName: activeInFields ? activeInFields.name : lastFieldFocus.name,
+      selectionStart: activeInFields ? selectionStart : lastFieldFocus.selectionStart,
+      selectionEnd: activeInFields ? selectionEnd : lastFieldFocus.selectionEnd
+    };
   }
 
-  $('save-draft').addEventListener('click', () => {
-    if ($('operation').value !== 'order') return;
-    const data = Object.fromEntries(new FormData($('entry')));
-    const draft = { id: activeDraftId || identifier('DRAFT'), ...data };
-    drafts = [...drafts.filter(item => item.id !== draft.id), draft];
-    activeDraftId = draft.id;
-    hasUnsavedChanges = true;
-    renderDrafts();
-    show('注文を下書き保存しました。閉じる前に台帳を保存してください。');
-  });
+  function restoreFormInput(snapshot) {
+    if (!snapshot || snapshot.type !== $('operation').value) return;
+    // 注文に紐づく選択肢（依頼・校正）は、選択中だった注文でフォームを作り直してから値を戻す
+    renderForm(snapshot.values.orderId || '');
+    for (const el of $('fields').querySelectorAll('input, select, textarea')) {
+      if (!el.name || !(el.name in snapshot.values)) continue;
+      const value = snapshot.values[el.name];
+      if (el.tagName === 'SELECT') {
+        // 取り込みで選択肢がなくなったものは無理に戻さない
+        if ([...el.options].some(option => option.value === value)) el.value = value;
+      } else {
+        el.value = value;
+      }
+    }
+    if (snapshot.activeName) {
+      const target = $('fields').querySelector('[name="' + snapshot.activeName + '"]');
+      if (target) {
+        target.focus();
+        if (isTextLike(target) && snapshot.selectionStart !== null) {
+          try { target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd); } catch {}
+        }
+        lastFieldFocus = { name: snapshot.activeName, selectionStart: snapshot.selectionStart, selectionEnd: snapshot.selectionEnd };
+      }
+    }
+  }
 
   function refresh() {
     state = workflow.buildState(events);
     renderOrders();
     renderHistory();
     renderForm();
-    renderDrafts();
   }
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
+  let currentKind = $('operation').value;
   $('operation').addEventListener('change', () => {
-    rememberForm();
-    restoreForm();
+    // RQ-085: 切り替える前に今の種類の記入途中を退避し、戻ってきた種類の下書きがあれば復元する。
+    // change発火時点ではセレクトの値は既に新しい種類なので、退避の記録は直前の種類で行う
+    const before = captureFormInput();
+    before.type = currentKind;
+    formDrafts.set(currentKind, before);
+    renderForm();
+    currentKind = $('operation').value;
+    const draft = formDrafts.get(currentKind);
+    if (draft) restoreFormInput(draft);
+  });
+
+  // RQ-106: 編集中の欄とカーソル位置を記録しておく（ファイル選択でフォーカスが移っても戻せるように）
+  $('fields').addEventListener('focusin', event => {
+    if (event.target.name) lastFieldFocus = { name: event.target.name, selectionStart: null, selectionEnd: null };
+  });
+  $('fields').addEventListener('input', event => {
+    if (isTextLike(event.target) && event.target.name) {
+      try {
+        lastFieldFocus = { name: event.target.name, selectionStart: event.target.selectionStart, selectionEnd: event.target.selectionEnd };
+      } catch {}
+    }
   });
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
-    const type = $('operation').value;
-    const data = Object.fromEntries(new FormData($('entry')));
-    if (data.dueDate && data.dueDate < localDate() &&
-      !confirm('希望納期 ' + data.dueDate + ' は過去日です。このまま登録しますか？')) return;
-    if (type === 'order' && !confirm('製造依頼を登録しますか？\n品名：' + data.product +
-      '\n用紙：' + data.paper + '\n部数：' + data.quantity + '部\n希望納期：' + data.dueDate)) return;
-    const selectedProof = state.proofs.get(data.proofId);
-    if (type === 'proofReply' && selectedProof && !confirm('校正回答を登録しますか？\n注文ID：' +
-      data.orderId + '\n品名：' + state.orders.get(data.orderId).product + '\n第' + selectedProof.version +
-      '版\n回答：' + data.proofDecision + '\n修正コメント：' + (data.comment || 'なし'))) return;
-    const item = { eventId: identifier('EV'), type, ...data, createdAt: new Date().toISOString() };
-    if (type === 'order') item.orderId = identifier('ORD');
-    if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
-    if (type === 'proof') item.proofId = identifier('PRF');
-    if (type === 'progress') item.updatedAt = new Date().toISOString();
-
+    // RQ-074: 処理中は再入させない（ボタンの無効化だけに頼らず、送信イベント自体も止める）
+    if (sending) return;
+    sending = true;
+    $('save-event').disabled = true;
     try {
+      const type = $('operation').value;
+      const data = Object.fromEntries(new FormData($('entry')));
+      const item = { eventId: identifier('EV'), type, ...data };
+      if (type === 'order') item.orderId = identifier('ORD');
+      if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
+      if (type === 'proof') item.proofId = identifier('PRF');
+      // RQ-055: 進捗と遅延は通知日時（updatedAt）を新旧判定に使うので、どちらも自動で付ける
+      if (type === 'progress' || type === 'delay') item.updatedAt = new Date().toISOString();
+
       events = workflow.mergeEvents(events, [item]).events;
-      if (type === 'order') {
-        drafts = drafts.filter(draft => draft.id !== activeDraftId);
-        activeDraftId = '';
-      }
-      hasUnsavedChanges = true;
-      formDrafts.delete(type);
+      markUnsaved();
       refresh();
+      // RQ-085: 登録が完了した種類の下書きは破棄する（次に戻ってきても復元されない）
+      formDrafts.delete(type);
       eventDownload(item);
       show(workflow.interfaces[type].name + 'を登録し、CSVを書き出しました。');
+      // 成功時は処理中扱いを続け、時間が経ったら通常の有効／無効の状態へ戻す
+      setTimeout(() => {
+        sending = false;
+        const currentType = $('operation').value;
+        $('save-event').disabled = currentType !== 'order' && orderChoices(currentType).length === 0;
+      }, outputGuardMs);
     } catch (error) {
+      // 失敗時はすぐ再操作できるように戻す（入力内容はそのまま残る）
+      sending = false;
+      $('save-event').disabled = false;
       show(error.message, true);
     }
   });
@@ -488,28 +389,38 @@
     const file = input.files[0];
     if (!file) return;
     input.disabled = true;
-    let kind = '形式不明のCSV';
     try {
       const text = await file.text();
-      kind = csvKind(text);
-      const result = workflow.mergeEvents(events, workflow.readExchange(text, department).map(item =>
-        item.type === 'proof' ? { ...item, receivedAt: new Date().toISOString() } : item));
+      const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
       events = result.events;
-      if (result.accepted > 0) hasUnsavedChanges = true;
+      // 新規に取り込んだ分がある時だけ未保存にする（取り込み済みの再取り込みでは変えない）
+      if (result.accepted > 0) markUnsaved();
+      // RQ-106: 再描画の直前に入力を退避し、描画後に戻して編集を続けられるようにする
+      const snapshot = captureFormInput();
       refresh();
+      restoreFormInput(snapshot);
       show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
     } catch (error) {
-      show('取り込みを中止しました（' + kind + '）。' + error.message, true);
+      show('取り込みを中止しました。' + error.message, true);
     } finally {
       input.disabled = false;
       input.value = '';
     }
   });
 
+  // RQ-074: 台帳の保存ボタンも、処理中は無効化して連続クリックで重ねて書き出さない
+  // ただし RQ-063: 前回の保存後に新しい更新があった場合は、間隔が短くても保存できるようにする
+  let savingBackup = false;
+  let savingBackupTimer = null;
   $('save-backup').addEventListener('click', () => {
-    download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events, drafts));
-    hasUnsavedChanges = false;
+    if (savingBackup && !unsaved) return;
+    savingBackup = true;
+    $('save-backup').disabled = true;
+    unsaved = false;
+    download(department + '-backup-' + localDate() + '.csv', workflow.exportBackup(department, events));
     show('台帳を保存しました。再開時は「台帳を開く」を使ってください。');
+    clearTimeout(savingBackupTimer);
+    savingBackupTimer = setTimeout(() => { savingBackup = false; $('save-backup').disabled = false; }, outputGuardMs);
   });
 
   $('backup').addEventListener('change', async event => {
@@ -517,20 +428,24 @@
     const file = input.files[0];
     if (!file) return;
     try {
-      const text = await file.text();
-      if (!csvKind(text).includes('台帳CSV')) throw new Error(csvKind(text) + 'です。「相手部署からのCSV」に読み込んでください。');
-      const saved = workflow.readBackup(department, text);
+      const saved = workflow.readBackup(department, await file.text());
+      // RQ-044: 入れ替える直前に、対象ファイル名と件数を必ず確認する（現在の台帳が空でも出す）。
+      // キャンセルした場合は現在の台帳をそのまま保持する。
       const orderCount = workflow.buildState(saved).orders.size;
-      if (!confirm('「' + file.name + '」を開きますか？\n注文 ' + orderCount +
-        ' 件／履歴 ' + saved.length + ' 件／下書き ' + (saved.drafts?.length || 0) + ' 件\n' +
-        (events.length || drafts.length ? '現在の台帳を置き換えます。' : 'この台帳で作業を開始します。'))) return;
+      const message = '台帳を入れ替えますか？\n\n' +
+        '対象ファイル：' + file.name + '\n' +
+        '件数：記録 ' + saved.length + ' 件（注文 ' + orderCount + ' 件）\n' +
+        '現在の台帳：記録 ' + events.length + ' 件\n\n' +
+        '現在の台帳は、対象ファイルの内容に置き換わります。';
+      if (!confirm(message)) return;
+      // RQ-088: 置き換える直前の台帳を退避しておき、誤って開いた場合に戻れるようにする
+      previousLedger = { events: [...events], unsaved };
       events = saved;
-      drafts = saved.drafts || [];
-      activeDraftId = '';
-      hasUnsavedChanges = false;
-      formDrafts.clear();
+      // 開いた台帳はファイルの内容そのものなので、未保存の更新はない状態になる
+      unsaved = false;
       refresh();
-      show('保存済みの台帳を開きました。');
+      updateRestoreButton();
+      show('保存済みの台帳を開きました。' + file.name + '（記録 ' + saved.length + ' 件）');
     } catch (error) {
       show('台帳を開けませんでした。' + error.message, true);
     } finally {
@@ -538,25 +453,39 @@
     }
   });
 
-  orderFilters.push(order => !$('unanswered-only').checked || [...state.requests.values()].some(request => request.orderId === order.id && !request.answer));
-  $('unanswered-only').addEventListener('change', renderOrders);
-  orderFilters.push(order => !$('shortage-only').checked || (order.initialFinished && order.goodQuantity < order.quantity));
-  $('shortage-only').addEventListener('change', renderOrders);
-  orderFilters.push(order => !$('hide-confirmed-cancel').checked || !order.cancelled);
-  $('hide-confirmed-cancel').addEventListener('change', renderOrders);
-  orderFilters.push(order => $('show-cancelled').checked || !order.cancelled);
-  $('show-cancelled').addEventListener('change', renderOrders);
-  $('history-order').addEventListener('change', renderHistory);
-  function proofDueThisWeek(order) {
-    const today = new Date(localDate() + 'T00:00:00Z');
-    const monday = new Date(today); monday.setUTCDate(today.getUTCDate() - (today.getUTCDay() + 6) % 7);
-    const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate() + 6);
-    return [...state.proofs.values()].some(proof => proof.orderId === order.id && !proof.answer &&
-      proof.responseDueDate >= monday.toISOString().slice(0, 10) && proof.responseDueDate <= sunday.toISOString().slice(0, 10));
+  // RQ-088: 「直前の台帳に戻す」ボタンを台帳の保存・再開の欄に追加する（app.js側で足すので両部署の画面で使える）
+  const restoreButton = element('button', '直前の台帳に戻す');
+  restoreButton.type = 'button';
+  restoreButton.className = 'secondary';
+  restoreButton.disabled = true;
+  $('backup').closest('section').append(restoreButton);
+  function updateRestoreButton() {
+    restoreButton.disabled = !previousLedger;
   }
+  restoreButton.addEventListener('click', () => {
+    if (!previousLedger) return;
+    const message = '直前の台帳に戻しますか？\n\n' +
+      '戻す台帳：記録 ' + previousLedger.events.length + ' 件\n' +
+      '現在の台帳：記録 ' + events.length + ' 件\n\n' +
+      '現在の台帳は置き換わります。開いたファイルは、再度「台帳を開く」から読み込めます。';
+    if (!confirm(message)) return;
+    // 現在の台帳も退避し直すので、もう一度押せば開いた台帳へも行き来できる
+    const current = { events: [...events], unsaved };
+    events = previousLedger.events;
+    unsaved = previousLedger.unsaved;
+    previousLedger = current;
+    refresh();
+    show('直前の台帳に戻しました。');
+  });
 
-  orderFilters.push(order => !$('proof-this-week').checked || proofDueThisWeek(order));
-  $('proof-this-week').addEventListener('change', renderOrders);
+  // RQ-063: 未保存の更新がある間だけ、閉じる／再読み込みの前にブラウザの確認を出す。
+  // 保存済み・変更なしの場合は何もしない（警告しない）。
+  window.addEventListener('beforeunload', event => {
+    if (!unsaved) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
     const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +
