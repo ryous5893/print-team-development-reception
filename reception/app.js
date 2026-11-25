@@ -500,6 +500,8 @@
     }
   });
 
+  orderFilters.push(order => !$('unanswered-only').checked || [...state.requests.values()].some(request => request.orderId === order.id && !request.answer));
+  $('unanswered-only').addEventListener('change', renderOrders);
   orderFilters.push(order => !$('due-today').checked || order.dueDate === localDate());
   $('due-today').addEventListener('change', renderOrders);
 
