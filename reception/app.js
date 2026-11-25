@@ -245,6 +245,25 @@
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
       row.append(...values.map(value => element('td', value)));
+      if (order.delayReason) {
+        const source = events.find(event => event.type === 'order' && event.orderId === order.id);
+        const editor = element('details');
+        editor.append(element('summary', '顧客向け遅延連絡'));
+        const message = element('textarea');
+        message.value = source.salesDelayContact?.message ?? '';
+        const messageLabel = element('label', '顧客へ伝えた内容');
+        messageLabel.append(message);
+        const save = element('button', '保存');
+        save.type = 'button';
+        save.addEventListener('click', () => {
+          if (!message.reportValidity()) return;
+          source.salesDelayContact = { message: message.value.trim() };
+          hasUnsavedChanges = true;
+          show('注文 ' + order.id + ' の顧客向け遅延連絡を台帳に記録しました。');
+        });
+        editor.append(messageLabel, save);
+        row.children[8].append(editor);
+      }
       for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
         const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
           Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
