@@ -316,6 +316,11 @@
       };
       badge.className = 'order-status order-status--' + (colors[status] || 'neutral');
       row.children[5].firstChild.replaceWith(badge);
+      for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
+        const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
+          Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
+        row.children[5].append(element('p', workflow.interfaces[request.type].name + '：未回答 ' + elapsed));
+      }
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
@@ -418,7 +423,7 @@
     event.preventDefault();
     const type = $('operation').value;
     const data = Object.fromEntries(new FormData($('entry')));
-    const item = { eventId: identifier('EV'), type, ...data };
+    const item = { eventId: identifier('EV'), type, ...data, createdAt: new Date().toISOString() };
     if (type === 'order') item.orderId = identifier('ORD');
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
     if (type === 'proof') item.proofId = identifier('PRF');
