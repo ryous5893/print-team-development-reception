@@ -180,6 +180,22 @@
         formFields.querySelector('[name="orderId"]').focus();
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
+      if (field === 'product') {
+        const limit = 100;
+        const count = element('span');
+        count.id = 'product-length';
+        count.className = 'hint';
+        count.setAttribute('aria-live', 'polite');
+        input.setAttribute('aria-describedby', count.id);
+        const updateCount = () => {
+          const length = [...input.value].length;
+          count.textContent = length + ' / ' + limit + '文字' + (length > limit ? '（目安を超えています）' : '');
+          count.classList.toggle('attention', length > limit);
+        };
+        input.addEventListener('input', updateCount);
+        updateCount();
+        label.append(count);
+      }
       if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
         const mark = element('span', '● 現行値と同じ');
         mark.className = 'unchanged';
