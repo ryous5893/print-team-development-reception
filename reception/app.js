@@ -241,6 +241,9 @@
         if (difference) comparison.className = 'attention';
         row.children[4].append(comparison);
       }
+      const cancellation = [...state.requests.values()].filter(request => request.orderId === order.id && request.type === 'cancel').at(-1);
+      if (cancellation) row.children[5].append(element('p', '製造側の取消確認：' +
+        (cancellation.answer === '承認' ? '確認済み' : cancellation.answer === '却下' ? '却下' : '確認待ち')));
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
@@ -425,6 +428,8 @@
   $('unanswered-only').addEventListener('change', renderOrders);
   orderFilters.push(order => !$('shortage-only').checked || (order.initialFinished && order.goodQuantity < order.quantity));
   $('shortage-only').addEventListener('change', renderOrders);
+  orderFilters.push(order => !$('hide-confirmed-cancel').checked || !order.cancelled);
+  $('hide-confirmed-cancel').addEventListener('change', renderOrders);
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
     const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +
