@@ -24,6 +24,11 @@
   let sending = false;
   // RQ-063: 台帳CSVに保存していない更新があるかどうか（ある間だけ離脱時に警告する）
   let unsaved = false;
+  // RQ-106: 最後にフォーカス／入力した欄を覚えておき、CSV取り込み後に編集へ復帰できるようにする
+  let lastFieldFocus = { name: '', selectionStart: null, selectionEnd: null };
+  function isTextLike(el) {
+    return el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text'));
+  }
   function markUnsaved() {
     unsaved = true;
     // 新しい更新が入ったら台帳保存の内容が変わるので、RQ-074の二重押しガード中でも
@@ -257,6 +262,53 @@
     if (!list.children.length) rowMessage(list, 5, 'やり取りはまだありません。');
   }
 
+  // RQ-106: 再描画で編集中の入力が消えないよう、フォームの内容を退避／復元する
+  function captureFormInput() {
+    const values = {};
+    for (const el of $('fields').querySelectorAll('input, select, textarea')) {
+      if (el.name) values[el.name] = el.value;
+    }
+    const active = document.activeElement;
+    const activeInFields = active && $('fields').contains(active) && active.name ? active : null;
+    let selectionStart = null;
+    let selectionEnd = null;
+    if (activeInFields && isTextLike(activeInFields)) {
+      try { selectionStart = activeInFields.selectionStart; selectionEnd = activeInFields.selectionEnd; } catch {}
+    }
+    return {
+      type: $('operation').value, values,
+      activeName: activeInFields ? activeInFields.name : lastFieldFocus.name,
+      selectionStart: activeInFields ? selectionStart : lastFieldFocus.selectionStart,
+      selectionEnd: activeInFields ? selectionEnd : lastFieldFocus.selectionEnd
+    };
+  }
+
+  function restoreFormInput(snapshot) {
+    if (!snapshot || snapshot.type !== $('operation').value) return;
+    // 注文に紐づく選択肢（依頼・校正）は、選択中だった注文でフォームを作り直してから値を戻す
+    renderForm(snapshot.values.orderId || '');
+    for (const el of $('fields').querySelectorAll('input, select, textarea')) {
+      if (!el.name || !(el.name in snapshot.values)) continue;
+      const value = snapshot.values[el.name];
+      if (el.tagName === 'SELECT') {
+        // 取り込みで選択肢がなくなったものは無理に戻さない
+        if ([...el.options].some(option => option.value === value)) el.value = value;
+      } else {
+        el.value = value;
+      }
+    }
+    if (snapshot.activeName) {
+      const target = $('fields').querySelector('[name="' + snapshot.activeName + '"]');
+      if (target) {
+        target.focus();
+        if (isTextLike(target) && snapshot.selectionStart !== null) {
+          try { target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd); } catch {}
+        }
+        lastFieldFocus = { name: snapshot.activeName, selectionStart: snapshot.selectionStart, selectionEnd: snapshot.selectionEnd };
+      }
+    }
+  }
+
   function refresh() {
     state = workflow.buildState(events);
     renderOrders();
@@ -266,6 +318,18 @@
 
   $('operation').append(...outgoing.map(([type, definition]) => option(type, definition.name)));
   $('operation').addEventListener('change', () => renderForm());
+
+  // RQ-106: 編集中の欄とカーソル位置を記録しておく（ファイル選択でフォーカスが移っても戻せるように）
+  $('fields').addEventListener('focusin', event => {
+    if (event.target.name) lastFieldFocus = { name: event.target.name, selectionStart: null, selectionEnd: null };
+  });
+  $('fields').addEventListener('input', event => {
+    if (isTextLike(event.target) && event.target.name) {
+      try {
+        lastFieldFocus = { name: event.target.name, selectionStart: event.target.selectionStart, selectionEnd: event.target.selectionEnd };
+      } catch {}
+    }
+  });
 
   $('entry').addEventListener('submit', event => {
     event.preventDefault();
@@ -313,7 +377,10 @@
       events = result.events;
       // 新規に取り込んだ分がある時だけ未保存にする（取り込み済みの再取り込みでは変えない）
       if (result.accepted > 0) markUnsaved();
+      // RQ-106: 再描画の直前に入力を退避し、描画後に戻して編集を続けられるようにする
+      const snapshot = captureFormInput();
       refresh();
+      restoreFormInput(snapshot);
       show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
     } catch (error) {
       show('取り込みを中止しました。' + error.message, true);
