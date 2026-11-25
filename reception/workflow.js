@@ -9,10 +9,14 @@
     proofReply:  { name: '校正回答', from: 'sales', fields: 'orderId proofId proofDecision comment' },
     additional:  { name: '追加製造依頼', from: 'sales', fields: 'requestId orderId quantity dueDate reason' },
     reply:       { name: '依頼回答', from: 'factory', fields: 'requestId orderId decision confirmedDueDate reason' },
+    // RQ-010: 受領通知は承認・却下とは別の種類として識別する（依頼を受けたことだけを知らせる）
+    receipt:     { name: '製造依頼受領通知', from: 'factory', fields: 'orderId requestId receivedAt' },
     proof:       { name: '校正確認依頼', from: 'factory', fields: 'orderId proofId version instruction responseDueDate' },
     progress:    { name: '製造進捗通知', from: 'factory', fields: 'orderId stage updatedAt expectedDate' },
-    delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate' },
-    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' }
+    delay:       { name: '納期遅延通知', from: 'factory', fields: 'orderId reason expectedDate updatedAt' },
+    finish:      { name: '製造完了報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' },
+    // RQ-037（案A）: 完了報告の訂正は、既存の完了報告CSVとは別の種類として識別する
+    finishCorrection: { name: '製造完了訂正報告', from: 'factory', fields: 'orderId requestId completedDate goodQuantity shortageQuantity' }
   };
   for (const definition of Object.values(interfaces)) {
     definition.fields = definition.fields.split(' ');
@@ -36,7 +40,11 @@
 
     for (const field of definition.fields) {
       const value = event[field];
+      // RQ-055: 遅延通知の通知日時（updatedAt）は今回追加した項目。
+      // 旧台帳に残る日時なしの遅延イベントだけは、欠けていても読み込めるようにする。
+      if (field === 'updatedAt' && event.type === 'delay' && typeof value !== 'string') continue;
       requireThat(typeof value === 'string', field + ' がありません。');
+      if (field === 'updatedAt' && event.type === 'delay' && value === '') continue;
       if (!optionalFields.includes(field)) {
         requireThat(value.trim(), field + ' は必須です。');
       }
@@ -65,13 +73,40 @@
     }
     if (event.type === 'progress') {
       requireThat(stages.includes(event.stage), '工程が不正です。');
+    }
+    // RQ-055: 進捗と遅延は通知日時（updatedAt）を新旧判定の基準にする
+    if (event.type === 'progress' || (event.type === 'delay' && event.updatedAt)) {
       requireThat(/^\d{4}-\d{2}-\d{2}T/.test(event.updatedAt) &&
         !isNaN(Date.parse(event.updatedAt)), '更新日時が不正です。');
+    }
+    // RQ-010: 受領日時も日時として検証する
+    if (event.type === 'receipt') {
+      requireThat(/^\d{4}-\d{2}-\d{2}T/.test(event.receivedAt) &&
+        !isNaN(Date.parse(event.receivedAt)), '受領日時が不正です。');
     }
   }
 
   function availableOrder(order) {
     return order && order.approved && !order.cancelled;
+  }
+
+  // RQ-065: 取り込み順が前後した時は、先に読むべきCSVを注文ID・依頼IDとともに案内する
+  function missingOrderMessage(event) {
+    const target = '注文ID ' + event.orderId + (event.requestId ? '・依頼ID ' + event.requestId : '');
+    return target + ' に対するCSVですが、注文ID ' + event.orderId +
+      ' の注文がまだ取り込まれていません。先に製造依頼CSV（注文ID ' + event.orderId + '）を読み込んでください。';
+  }
+  function missingRequestMessage(event) {
+    return '依頼ID ' + event.requestId + '（注文ID ' + event.orderId + '）の依頼がまだ取り込まれていません。' +
+      '先にその依頼のCSV（注文ID ' + event.orderId + '・依頼ID ' + event.requestId + '）を読み込んでください。';
+  }
+  function notApprovedMessage(order) {
+    return '注文ID ' + order.id + ' はまだ承認されていません。' +
+      '先に依頼回答CSV（注文ID ' + order.id + '・依頼ID ' + order.originalRequestId + '）を読み込んでください。';
+  }
+  function requestNotApprovedMessage(event, order) {
+    return '依頼ID ' + event.requestId + '（注文ID ' + order.id + '）はまだ承認されていません。' +
+      '先に依頼回答CSV（注文ID ' + order.id + '・依頼ID ' + event.requestId + '）を読み込んでください。';
   }
 
   function applyEvent(state, event) {
@@ -86,35 +121,44 @@
         id: event.orderId, originalRequestId: event.requestId, product: event.product,
         paper: event.paper, quantity: Number(event.quantity), dueDate: event.dueDate,
         approved: false, cancelled: false, progress: '', progressAt: '',
-        expectedDate: '', delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: ''
+        expectedDate: '', expectedDateAt: '', expectedDateLegacyDelay: false,
+        delayReason: '', goodQuantity: 0, initialFinished: false, proofStatus: ''
       });
     } else {
-      requireThat(order, '該当する注文がありません。先行するCSVを読み込んでください。');
+      requireThat(order, missingOrderMessage(event));
     }
 
     if (requestTypes.includes(event.type)) {
       requireThat(!request, '依頼IDが重複しています。');
       if (event.type !== 'order') {
+        if (!order.approved && !order.cancelled) throw new Error(notApprovedMessage(order));
         requireThat(availableOrder(order), '承認済みで有効な注文を選んでください。');
       }
-      state.requests.set(event.requestId, { ...event, sequence: state.requests.size,
-        answer: '', finished: false, targetQuantity: Number(event.quantity || 0) });
+      state.requests.set(event.requestId, { ...event, answer: '', finished: false, targetQuantity: Number(event.quantity || 0) });
       return;
     }
 
     if (event.type === 'reply') {
-      requireThat(request && request.orderId === order.id && !request.answer, '該当する未回答の依頼がありません。');
+      requireThat(request && request.orderId === order.id, missingRequestMessage(event));
+      requireThat(!request.answer, '該当する未回答の依頼がありません。');
       const approved = event.decision === '承認';
+      // RQ-005: 最後に受け付けた変更を基準にする。
+      // 自分より後に受け付けた変更が既に承認（適用）済みの場合、その変更が基準なので、
+      // 古い変更の承認を取り込んでも注文の用紙・部数・納期を上書きしない。
+      // 承認イベント自体は取り込んで履歴に残し、上書きしなかったことを記録する。
+      const requestsInOrder = [...state.requests.values()];
+      const supersededByLaterChange = approved && request.type === 'change' &&
+        requestsInOrder.slice(requestsInOrder.indexOf(request) + 1).some(other =>
+          other.orderId === order.id && other.type === 'change' &&
+          other.answer === '承認' && !other.superseded);
       if (approved && request.type !== 'order') {
         requireThat(availableOrder(order), 'キャンセル済みの注文は承認できません。');
       }
       if (approved && request.type === 'change') {
         requireThat(!order.initialFinished, '当初分の製造完了後は注文変更を承認できません。');
-        request.superseded = request.sequence < (order.lastApprovedChangeSequence ?? -1);
-        if (!request.superseded) {
+        if (!supersededByLaterChange) {
           order.paper = request.paper;
           order.quantity = Number(request.quantity);
-          order.lastApprovedChangeSequence = request.sequence;
           state.requests.get(order.originalRequestId).targetQuantity = order.quantity;
         }
       }
@@ -123,15 +167,32 @@
         order.cancelled = true;
       }
       if (approved && request.type === 'order') order.approved = true;
-      if (approved && ['order', 'change'].includes(request.type) && !request.superseded) {
+      if (approved && ['order', 'change'].includes(request.type) && !supersededByLaterChange) {
         order.dueDate = event.confirmedDueDate || request.dueDate;
       }
       request.answer = event.decision;
+      request.superseded = supersededByLaterChange;
+      if (supersededByLaterChange) {
+        request.supersededNote = '後に受け付けた変更が承認済みのため、この承認では上書きしませんでした。';
+        event.superseded = true;
+      }
       request.confirmedDueDate = event.confirmedDueDate || request.dueDate || '';
       request.answerReason = event.reason;
       return;
     }
 
+    if (event.type === 'receipt') {
+      // RQ-010: 受領通知は「依頼を受けた」ことだけの記録で、承認・却下（answer）は付けない。
+      // 承認前の注文にも付くので、承認済みチェック（availableOrder）の対象にしない。
+      // 回答が先に取り込まれた後に届いても記録はする（表示は回答結果が優先される）。
+      requireThat(request && request.orderId === order.id, missingRequestMessage(event));
+      requireThat(!request.received, '既に受領通知済みの依頼です。');
+      request.received = true;
+      request.receivedAt = event.receivedAt;
+      return;
+    }
+
+    if (!order.approved && !order.cancelled) throw new Error(notApprovedMessage(order));
     requireThat(availableOrder(order), '承認済みで有効な注文を選んでください。');
     switch (event.type) {
       case 'proof': {
@@ -144,7 +205,10 @@
         break;
       }
       case 'proofReply':
-        requireThat(proof && proof.orderId === order.id && !proof.answer, '該当する回答待ちの校正がありません。');
+        requireThat(proof && proof.orderId === order.id,
+          '校正ID ' + event.proofId + '（注文ID ' + order.id + '）の校正がまだ取り込まれていません。' +
+          '先に校正確認依頼CSV（注文ID ' + order.id + '・校正ID ' + event.proofId + '）を読み込んでください。');
+        requireThat(!proof.answer, '該当する回答待ちの校正がありません。');
         proof.answer = event.proofDecision;
         proof.comment = event.comment;
         order.proofStatus = event.proofDecision + '（第' + proof.version + '版）';
@@ -153,16 +217,42 @@
         if (!order.progressAt || Date.parse(event.updatedAt) >= Date.parse(order.progressAt)) {
           order.progressAt = event.updatedAt;
           order.progress = event.stage;
-          order.expectedDate = event.expectedDate;
+          // RQ-055: 見込み日は「通知日時が最新の通知」のものだけを現在値にする。
+          // 自分より新しい遅延／進捗が既に見込み日を決めている場合は上書きしない。
+          // イベント自体は履歴に残る。工程（stage）は従来どおり進捗同士の新旧で更新する。
+          if (!order.expectedDateLegacyDelay &&
+            (!order.expectedDateAt || Date.parse(event.updatedAt) >= Date.parse(order.expectedDateAt))) {
+            order.expectedDate = event.expectedDate;
+            order.expectedDateAt = event.updatedAt;
+          }
         }
         break;
-      case 'delay':
-        order.delayReason = event.reason;
-        order.expectedDate = event.expectedDate;
+      case 'delay': {
+        // RQ-055: 遅延も通知日時で新旧を判定する（進捗と同じ基準）。
+        if (!event.updatedAt) {
+          // 旧形式（通知日時なし）の遅延は新旧を判定できないため、
+          // 取り込んだ時点で最新として扱い、その見込み日を後の進捗で上書きしない。
+          // 日時ありの通知が次に来れば、そちらの判定に切り替わる。
+          order.delayReason = event.reason;
+          order.expectedDate = event.expectedDate;
+          order.expectedDateLegacyDelay = true;
+          break;
+        }
+        if (order.expectedDateLegacyDelay || !order.expectedDateAt ||
+          Date.parse(event.updatedAt) >= Date.parse(order.expectedDateAt)) {
+          order.delayReason = event.reason;
+          order.expectedDate = event.expectedDate;
+          order.expectedDateAt = event.updatedAt;
+          order.expectedDateLegacyDelay = false;
+        }
         break;
+      }
       case 'finish':
-        requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type) &&
-          request.answer === '承認' && !request.finished, '承認済みで未完了の製造依頼を選んでください。');
+        // RQ-065: 順序が前後した場合は、先に読むべきCSVを案内する
+        requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type),
+          missingRequestMessage(event));
+        requireThat(request.answer === '承認', requestNotApprovedMessage(event, order));
+        requireThat(!request.finished, '承認済みで未完了の製造依頼を選んでください。');
         requireThat(!order.proofStatus || order.proofStatus.startsWith('承認'), '校正の承認を確認してください。');
         requireThat(Number(event.goodQuantity) + Number(event.shortageQuantity) === request.targetQuantity,
           '良品部数と不足部数の合計を対象依頼の部数に合わせてください。');
@@ -173,11 +263,31 @@
         order.goodQuantity += request.goodQuantity;
         if (request.type === 'order') order.initialFinished = true;
         break;
+      case 'finishCorrection':
+        // RQ-037: 訂正は完了済みの依頼にだけ許可する。通常の完了報告（finish）は従来どおり完了済みに使えない。
+        // RQ-065: 順序が前後した場合は、先に読むべきCSVを案内する
+        requireThat(request && request.orderId === order.id && ['order', 'additional'].includes(request.type),
+          missingRequestMessage(event));
+        requireThat(request.answer === '承認', requestNotApprovedMessage(event, order));
+        requireThat(request.finished, '完了済みの製造依頼を選んでください。' +
+          'まだ完了報告を取り込んでいない場合は、先に製造完了報告CSV（注文ID ' + order.id +
+          '・依頼ID ' + event.requestId + '）を読み込んでください。');
+        requireThat(Number(event.goodQuantity) + Number(event.shortageQuantity) === request.targetQuantity,
+          '良品部数と不足部数の合計を対象依頼の部数に合わせてください。');
+        // 加算ではなく差分で置き換える（旧値との差だけ注文の良品累計を動かす）
+        order.goodQuantity += Number(event.goodQuantity) - request.goodQuantity;
+        request.goodQuantity = Number(event.goodQuantity);
+        request.shortageQuantity = Number(event.shortageQuantity);
+        request.completedDate = event.completedDate;
+        request.corrected = true;
+        request.correctionCount = (request.correctionCount || 0) + 1;
+        break;
     }
   }
 
   function eventValues(event) {
-    return ['eventId', 'type', ...interfaces[event.type].fields].map(field => event[field]);
+    // 旧形式のイベントで後から追加された項目（遅延の updatedAt 等）が無くても書き出せるようにする
+    return ['eventId', 'type', ...interfaces[event.type].fields].map(field => event[field] ?? '');
   }
 
   function buildState(events) {
@@ -288,10 +398,8 @@
     });
   }
 
-  function exportBackup(department, events, drafts = []) {
-    const rows = events.map(event => [department, JSON.stringify(event)]);
-    if (department === 'sales' && drafts.length) rows.push([department, JSON.stringify({ salesDrafts: drafts })]);
-    return encodeCsv([['department', 'event'], ...rows]);
+  function exportBackup(department, events) {
+    return encodeCsv([['department', 'event'], ...events.map(event => [department, JSON.stringify(event)])]);
   }
 
   function readBackup(department, text) {
@@ -301,19 +409,6 @@
       requireThat(row.length === 2 && row[0] === department, '自部署で保存した台帳を選んでください。');
       return JSON.parse(row[1]);
     });
-    const metadata = events.at(-1);
-    if (department === 'sales' && metadata && Object.hasOwn(metadata, 'salesDrafts')) {
-      requireThat(!metadata.type && Array.isArray(metadata.salesDrafts), '下書き情報が不正です。');
-      const ids = new Set();
-      for (const draft of metadata.salesDrafts) {
-        requireThat(draft && typeof draft.id === 'string' && /^[A-Za-z0-9_-]+$/.test(draft.id) &&
-          !ids.has(draft.id) && ['product', 'paper', 'quantity', 'dueDate'].every(field =>
-            typeof draft[field] === 'string'), '下書き情報が不正です。');
-        ids.add(draft.id);
-      }
-      events.pop();
-      events.drafts = metadata.salesDrafts;
-    }
     buildState(events);
     return events;
   }
