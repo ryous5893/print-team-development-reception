@@ -146,6 +146,7 @@
       input.min = ['goodQuantity', 'shortageQuantity'].includes(field) ? '0' : '1';
       input.step = '1';
     }
+    if (field === 'paper') input.setAttribute('list', 'paper-options');
     if (field === 'completedDate') input.value = localDate();
     if (field === 'version') {
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
@@ -300,31 +301,11 @@
         }
       });
       row.children[0].append(copyId);
-      {
-      const source = events.find(event => event.type === 'order' && event.orderId === order.id);
-      const editor = element('details');
-      editor.append(element('summary', '顧客の連絡先'));
-      const phone = element('input');
-      phone.type = 'tel';
-      phone.value = source.salesCustomer?.phone ?? '';
-      const phoneLabel = element('label', '電話番号');
-      phoneLabel.append(phone);
-      const email = element('input');
-      email.type = 'email';
-      email.value = source.salesCustomer?.email ?? '';
-      const emailLabel = element('label', 'メールアドレス');
-      emailLabel.append(email);
-      const save = element('button', '保存');
-      save.type = 'button';
-      save.addEventListener('click', () => {
-        if (!phone.reportValidity() || !email.reportValidity()) return;
-        source.salesCustomer = { phone: phone.value.trim(), email: email.value.trim() };
-        hasUnsavedChanges = true;
-        show('注文 ' + order.id + ' の顧客の連絡先を台帳に記録しました。');
-      });
-      editor.append(phoneLabel, emailLabel, save);
-      row.children[1].append(editor);
-      }
+      const print = element('button', '注文票を印刷');
+      print.type = 'button';
+      print.className = 'secondary';
+      print.addEventListener('click', () => printOrder(order));
+      row.children[0].append(print);
       for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
         const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
           Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
@@ -387,6 +368,31 @@
       }
       timeline.append(entries);
       row.children[5].append(timeline);
+      {
+      const source = events.find(event => event.type === 'order' && event.orderId === order.id);
+      const editor = element('details');
+      editor.append(element('summary', '顧客の連絡先'));
+      const phone = element('input');
+      phone.type = 'tel';
+      phone.value = source.salesCustomer?.phone ?? '';
+      const phoneLabel = element('label', '電話番号');
+      phoneLabel.append(phone);
+      const email = element('input');
+      email.type = 'email';
+      email.value = source.salesCustomer?.email ?? '';
+      const emailLabel = element('label', 'メールアドレス');
+      emailLabel.append(email);
+      const save = element('button', '保存');
+      save.type = 'button';
+      save.addEventListener('click', () => {
+        if (!phone.reportValidity() || !email.reportValidity()) return;
+        source.salesCustomer = { phone: phone.value.trim(), email: email.value.trim() };
+        hasUnsavedChanges = true;
+        show('注文 ' + order.id + ' の顧客の連絡先を台帳に記録しました。');
+      });
+      editor.append(phoneLabel, emailLabel, save);
+      row.children[1].append(editor);
+      }
       const sourceForContact = events.find(event => event.type === 'order' && event.orderId === order.id);
       const contact = element('details');
       contact.append(element('summary', '確定納期の顧客連絡記録'));
@@ -669,6 +675,21 @@
     orderPage = 1;
     renderOrders();
   });
+
+  function printOrder(order) {
+    const sheet = $('print-order-sheet');
+    const details = element('dl');
+    const fields = [
+      ['注文ID', order.id], ['品名', order.product], ['用紙', order.paper],
+      ['部数', order.quantity + '部'], ['納期', order.dueDate], ['状態', statusOf(order)],
+      ['校正', order.proofStatus || '—'], ['完了見込み', order.expectedDate || '—']
+    ];
+    for (const [label, value] of fields) details.append(element('dt', label), element('dd', value));
+    sheet.replaceChildren(element('h1', '注文票'), details);
+    document.body.classList.add('printing-order');
+    try { window.print(); }
+    finally { document.body.classList.remove('printing-order'); }
+  }
 
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
