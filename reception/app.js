@@ -286,6 +286,19 @@
         editor.append(messageLabel, save);
         row.children[8].append(editor);
       }
+      const copyId = element('button', 'IDをコピー');
+      copyId.type = 'button';
+      copyId.className = 'secondary';
+      copyId.setAttribute('aria-label', '注文ID ' + order.id + ' をコピー');
+      copyId.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(order.id);
+          show('注文ID ' + order.id + ' をコピーしました。');
+        } catch {
+          show('コピーできませんでした。注文IDを選択して手動でコピーしてください。', true);
+        }
+      });
+      row.children[0].append(copyId);
       for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
         const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
           Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
