@@ -75,21 +75,6 @@
     $('message').dataset.error = String(error);
   }
 
-  function csvKind(text) {
-    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
-    const header = lines[0].replaceAll('"', '');
-    if (header === 'department,event') {
-      try { workflow.readBackup(department, text); return '自部署の台帳CSV（「台帳を開く」用）'; }
-      catch { return '台帳CSV（部署・内容を確認してください）'; }
-    }
-    if (header.startsWith('eventId,type,')) {
-      const type = (lines[1] || '').split(',')[1]?.replaceAll('"', '');
-      const definition = Object.hasOwn(workflow.interfaces, type) && workflow.interfaces[type];
-      if (definition) return (definition.from === department ? '自部署から送る' : '相手部署からの') + definition.name + 'CSV';
-    }
-    return '形式不明のCSV';
-  }
-
   function localDate() {
     const now = new Date();
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -151,9 +136,6 @@
       const last = [...state.proofs.values()].filter(proof => order && proof.orderId === order.id).at(-1);
       input.value = last ? Number(last.version) + 1 : 1;
     }
-    if (type === 'additional' && field === 'quantity' && order?.initialFinished && order.quantity > order.goodQuantity) {
-      input.value = order.quantity - order.goodQuantity;
-    }
     if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
       input.value = order[field];
     }
@@ -180,18 +162,6 @@
         formFields.querySelector('[name="orderId"]').focus();
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
-      if (type === 'change' && order && ['paper', 'quantity', 'dueDate'].includes(field)) {
-        const mark = element('span', '● 現行値と同じ');
-        mark.className = 'unchanged';
-        mark.setAttribute('aria-live', 'polite');
-        const updateMark = () => {
-          mark.hidden = field === 'quantity' ? !input.value || Number(input.value) !== order.quantity : input.value !== String(order[field]);
-        };
-        input.addEventListener('input', updateMark);
-        input.addEventListener('change', updateMark);
-        updateMark();
-        label.append(mark);
-      }
       formFields.append(label);
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
@@ -233,136 +203,30 @@
     tableBody.append(row);
   }
 
-  const orderFilters = [];
-
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
     for (const order of [...state.orders.values()].reverse()) {
-      if (!orderFilters.every(filter => filter(order))) continue;
       const row = element('tr');
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
       row.append(...values.map(value => element('td', value)));
-      for (const request of [...state.requests.values()].filter(item => item.orderId === order.id && !item.answer)) {
-        const elapsed = request.createdAt && Number.isFinite(Date.parse(request.createdAt)) ?
-          Math.max(0, Math.floor((Date.now() - Date.parse(request.createdAt)) / 86400000)) + '日経過' : '依頼日時不明';
-        row.children[5].append(element('p', workflow.interfaces[request.type].name + '：未回答 ' + elapsed));
-      }
-      const approvedRequest = [...state.requests.values()].filter(request => request.orderId === order.id &&
-        ['order', 'change'].includes(request.type) && request.answer === '承認' && !request.superseded).at(-1);
-      if (approvedRequest) {
-        const difference = Math.round((Date.parse(approvedRequest.confirmedDueDate) - Date.parse(approvedRequest.dueDate)) / 86400000);
-        const comparison = element('p', '希望 ' + approvedRequest.dueDate + ' → 確定 ' + approvedRequest.confirmedDueDate +
-          '（' + (difference > 0 ? '+' : '') + difference + '日）');
-        if (difference) comparison.className = 'attention';
-        row.children[4].append(comparison);
-      }
-      const cancellation = [...state.requests.values()].filter(request => request.orderId === order.id && request.type === 'cancel').at(-1);
-      if (cancellation) row.children[5].append(element('p', '製造側の取消確認：' +
-        (cancellation.answer === '承認' ? '確認済み' : cancellation.answer === '却下' ? '却下' : '確認待ち')));
-      const copy = element('button', 'コピーして新規注文');
-      copy.type = 'button';
-      copy.className = 'secondary';
-      copy.addEventListener('click', () => {
-        rememberForm();
-        if (typeof activeDraftId !== 'undefined') activeDraftId = '';
-        $('operation').value = 'order';
-        formDrafts.set('order', { product: order.product, paper: order.paper, quantity: String(order.quantity), dueDate: order.dueDate });
-        restoreForm();
-        $('fields').querySelector('[name="quantity"]').focus();
-        show('注文 ' + order.id + ' をコピーしました。部数・希望納期を確認して登録してください。');
-      });
-      row.children[1].append(copy);
-      const source = events.find(event => event.type === 'order' && event.orderId === order.id);
-      const memo = element('details');
-      memo.append(element('summary', '社内メモ'));
-      const memoLabel = element('label', '担当交代用の社内メモ');
-      const input = element('textarea');
-      input.value = source.salesNote || '';
-      const save = element('button', 'メモを保存');
-      save.type = 'button';
-      save.addEventListener('click', () => {
-        source.salesNote = input.value;
-        hasUnsavedChanges = true;
-        show('注文 ' + order.id + ' のメモを保存しました。閉じる前に台帳を保存してください。');
-      });
-      memoLabel.append(input);
-      memo.append(memoLabel, save);
-      row.children[1].append(memo);
-      const timeline = element('details');
-      timeline.append(element('summary', 'この注文の依頼・回答を見る'));
-      timeline.append(element('p', '台帳の受付順（古いものから表示）'));
-      const entries = element('ol');
-      for (const event of events.filter(item => item.orderId === order.id)) {
-        const entry = element('li', workflow.interfaces[event.type].name + ' · ' +
-          (event.requestId || event.proofId || event.eventId));
-        const contents = element('dl');
-        for (const field of workflow.interfaces[event.type].fields) {
-          contents.append(element('dt', fields[field]?.[0] || field), element('dd', event[field] || '—'));
-        }
-        entry.append(contents);
-        entries.append(entry);
-      }
-      timeline.append(entries);
-      row.children[5].append(timeline);
-      const sourceForContact = events.find(event => event.type === 'order' && event.orderId === order.id);
-      const contact = element('details');
-      contact.append(element('summary', '確定納期の顧客連絡記録'));
-      if (order.approved) {
-        const dateLabel = element('label', '連絡日時');
-        const date = element('input'); date.type = 'datetime-local'; date.required = true;
-        date.value = sourceForContact.salesContact?.date || '';
-        const methodLabel = element('label', '連絡方法');
-        const method = select('contactMethod', ['電話', 'メール', '店頭', 'その他'].map(value => [value, value]));
-        method.required = true; method.value = sourceForContact.salesContact?.method || '';
-        const save = element('button', '連絡記録を保存'); save.type = 'button';
-        save.addEventListener('click', () => {
-          if (!date.reportValidity() || !method.reportValidity()) return;
-          sourceForContact.salesContact = { date: date.value, method: method.value };
-          hasUnsavedChanges = true;
-          show('注文 ' + order.id + ' の顧客連絡を記録しました。閉じる前に台帳を保存してください。');
-        });
-        dateLabel.append(date); methodLabel.append(method); contact.append(dateLabel, methodLabel, save);
-      } else contact.append(element('p', '製造承認後に連絡を記録できます。'));
-      row.children[4].append(contact);
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = list.querySelectorAll('tr:not(:has(.empty))').length + '件表示 ／ 全' + state.orders.size + '件';
+    $('order-count').textContent = state.orders.size + '件';
   }
 
   function renderHistory() {
     const list = $('history');
     list.replaceChildren();
-    const selectedOrder = $('history-order').value;
-    $('history-order').replaceChildren(option('', '全注文'), ...[...state.orders.values()].map(order => option(order.id, order.id + ' · ' + order.product)));
-    $('history-order').value = state.orders.has(selectedOrder) ? selectedOrder : '';
     for (const event of [...events].reverse()) {
-      if ($('history-order').value && event.orderId !== $('history-order').value) continue;
       const definition = workflow.interfaces[event.type];
       const sent = definition.from === department;
       const row = element('tr');
       const detail = element('details');
       detail.append(element('summary', '内容を見る'));
-      const changeRequest = event.type === 'reply' && state.requests.get(event.requestId);
-      if (changeRequest?.beforeChange && changeRequest.afterChange) {
-        const comparison = element('table');
-        comparison.append(element('caption', '承認済み変更の前後'));
-        const header = element('tr');
-        header.append(...['項目', '変更前', '変更後'].map(value => element('th', value)));
-        comparison.append(header);
-        for (const field of ['quantity', 'paper', 'dueDate']) {
-          const row = element('tr');
-          row.append(...[fields[field][0], changeRequest.beforeChange[field], changeRequest.afterChange[field]].map(value => element('td', value)));
-          if (changeRequest.beforeChange[field] !== changeRequest.afterChange[field]) row.className = 'changed';
-          comparison.append(row);
-        }
-        detail.append(comparison);
-      }
-      if (event.type === 'proof') detail.append(element('p', '取り込み日時：' +
-        (event.receivedAt ? new Date(event.receivedAt).toLocaleString('ja-JP') : '不明（記録開始前）')));
       const metadata = element('dl');
       for (const field of definition.fields) {
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
@@ -376,7 +240,7 @@
         button.type = 'button';
         button.className = 'secondary';
         button.addEventListener('click', () => eventDownload(event));
-        actionCell.append(element('p', event.type + '-' + event.orderId + '-' + event.eventId + '.csv'), button);
+        actionCell.append(button);
       } else {
         actionCell.textContent = '—';
       }
@@ -413,12 +277,6 @@
     }
     if (!drafts.length) rowMessage(list, 6, '下書きはありません。');
     $('draft-count').textContent = drafts.length + '件';
-    const sentToday = events.filter(event => {
-      if (event.type !== 'order' || !event.createdAt) return false;
-      const date = new Date(event.createdAt);
-      return Number.isFinite(date.getTime()) && new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10) === localDate();
-    }).length;
-    $('daily-counts').textContent = '本日の製造依頼済み：' + sentToday + '件 ／ 未送付下書き：' + drafts.length + '件';
   }
 
   $('save-draft').addEventListener('click', () => {
@@ -450,15 +308,7 @@
     event.preventDefault();
     const type = $('operation').value;
     const data = Object.fromEntries(new FormData($('entry')));
-    if (data.dueDate && data.dueDate < localDate() &&
-      !confirm('希望納期 ' + data.dueDate + ' は過去日です。このまま登録しますか？')) return;
-    if (type === 'order' && !confirm('製造依頼を登録しますか？\n品名：' + data.product +
-      '\n用紙：' + data.paper + '\n部数：' + data.quantity + '部\n希望納期：' + data.dueDate)) return;
-    const selectedProof = state.proofs.get(data.proofId);
-    if (type === 'proofReply' && selectedProof && !confirm('校正回答を登録しますか？\n注文ID：' +
-      data.orderId + '\n品名：' + state.orders.get(data.orderId).product + '\n第' + selectedProof.version +
-      '版\n回答：' + data.proofDecision + '\n修正コメント：' + (data.comment || 'なし'))) return;
-    const item = { eventId: identifier('EV'), type, ...data, createdAt: new Date().toISOString() };
+    const item = { eventId: identifier('EV'), type, ...data };
     if (type === 'order') item.orderId = identifier('ORD');
     if (['order', 'change', 'cancel', 'additional'].includes(type)) item.requestId = identifier('REQ');
     if (type === 'proof') item.proofId = identifier('PRF');
@@ -485,18 +335,15 @@
     const file = input.files[0];
     if (!file) return;
     input.disabled = true;
-    let kind = '形式不明のCSV';
     try {
       const text = await file.text();
-      kind = csvKind(text);
-      const result = workflow.mergeEvents(events, workflow.readExchange(text, department).map(item =>
-        item.type === 'proof' ? { ...item, receivedAt: new Date().toISOString() } : item));
+      const result = workflow.mergeEvents(events, workflow.readExchange(text, department));
       events = result.events;
       if (result.accepted > 0) hasUnsavedChanges = true;
       refresh();
       show(file.name + ' を取り込みました。新規 ' + result.accepted + ' 件、取り込み済み ' + result.skipped + ' 件。');
     } catch (error) {
-      show('取り込みを中止しました（' + kind + '）。' + error.message, true);
+      show('取り込みを中止しました。' + error.message, true);
     } finally {
       input.disabled = false;
       input.value = '';
@@ -514,9 +361,7 @@
     const file = input.files[0];
     if (!file) return;
     try {
-      const text = await file.text();
-      if (!csvKind(text).includes('台帳CSV')) throw new Error(csvKind(text) + 'です。「相手部署からのCSV」に読み込んでください。');
-      const saved = workflow.readBackup(department, text);
+      const saved = workflow.readBackup(department, await file.text());
       const orderCount = workflow.buildState(saved).orders.size;
       if (!confirm('「' + file.name + '」を開きますか？\n注文 ' + orderCount +
         ' 件／履歴 ' + saved.length + ' 件／下書き ' + (saved.drafts?.length || 0) + ' 件\n' +
@@ -535,25 +380,6 @@
     }
   });
 
-  orderFilters.push(order => !$('unanswered-only').checked || [...state.requests.values()].some(request => request.orderId === order.id && !request.answer));
-  $('unanswered-only').addEventListener('change', renderOrders);
-  orderFilters.push(order => !$('shortage-only').checked || (order.initialFinished && order.goodQuantity < order.quantity));
-  $('shortage-only').addEventListener('change', renderOrders);
-  orderFilters.push(order => !$('hide-confirmed-cancel').checked || !order.cancelled);
-  $('hide-confirmed-cancel').addEventListener('change', renderOrders);
-  orderFilters.push(order => $('show-cancelled').checked || !order.cancelled);
-  $('show-cancelled').addEventListener('change', renderOrders);
-  $('history-order').addEventListener('change', renderHistory);
-  function proofDueThisWeek(order) {
-    const today = new Date(localDate() + 'T00:00:00Z');
-    const monday = new Date(today); monday.setUTCDate(today.getUTCDate() - (today.getUTCDay() + 6) % 7);
-    const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate() + 6);
-    return [...state.proofs.values()].some(proof => proof.orderId === order.id && !proof.answer &&
-      proof.responseDueDate >= monday.toISOString().slice(0, 10) && proof.responseDueDate <= sunday.toISOString().slice(0, 10));
-  }
-
-  orderFilters.push(order => !$('proof-this-week').checked || proofDueThisWeek(order));
-  $('proof-this-week').addEventListener('change', renderOrders);
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
     const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +

@@ -55,8 +55,6 @@
     <p id="message" role="status" aria-live="polite">CSVの処理結果をここに表示します。</p>
 
     <section aria-labelledby="drafts-title">
-      <p id="daily-counts" role="status"></p>
-      <p class="hint">依頼日時が不明な注文は当日件数に含めません。</p>
       <h2 id="drafts-title">下書き一覧 <span id="draft-count" class="count"></span></h2>
       <p class="hint">下書きは製造部へ送信しません。閉じる前に台帳を保存してください。</p>
       <div class="table-wrap"><table aria-labelledby="drafts-title">
@@ -67,13 +65,6 @@
 
     <section aria-labelledby="orders-title">
       <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
-      <div id="order-filters">
-        <label><input type="checkbox" id="proof-this-week">校正期限が今週中で回答待ち</label>
-        <label><input type="checkbox" id="show-cancelled">キャンセル済み注文も表示</label>
-        <label><input type="checkbox" id="hide-confirmed-cancel">取消確認済みを日次一覧から除外</label>
-        <label><input type="checkbox" id="shortage-only">完了・良品不足のみ</label>
-        <label><input type="checkbox" id="unanswered-only">製造への依頼が未回答の注文のみ</label>
-      </div>
       <div class="table-wrap">
         <table aria-labelledby="orders-title">
           <thead><tr><th scope="col">注文ID</th><th scope="col">品名</th><th scope="col">用紙</th><th scope="col">部数</th><th scope="col">納期</th><th scope="col">状態</th><th scope="col">校正</th><th scope="col">完了見込み</th><th scope="col">遅延理由</th><th scope="col">良品累計</th></tr></thead>
@@ -84,7 +75,6 @@
 
     <section aria-labelledby="history-title">
       <h2 id="history-title">やり取り履歴</h2>
-      <label>注文IDで絞り込み<select id="history-order"><option value="">全注文</option></select></label>
       <div class="table-wrap">
         <table aria-labelledby="history-title">
           <thead><tr><th scope="col">方向</th><th scope="col">種類</th><th scope="col">注文ID</th><th scope="col">内容</th><th scope="col">再出力</th></tr></thead>
