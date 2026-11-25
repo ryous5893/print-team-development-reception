@@ -215,10 +215,13 @@
     tableBody.append(row);
   }
 
+  const orderFilters = [];
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
     for (const order of [...state.orders.values()].reverse()) {
+      if (!orderFilters.every(filter => filter(order))) continue;
       const row = element('tr');
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
@@ -227,7 +230,7 @@
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = state.orders.size + '件';
+    $('order-count').textContent = list.querySelectorAll('tr:not(:has(.empty))').length + '件表示 ／ 全' + state.orders.size + '件';
   }
 
   function renderHistory() {
@@ -404,6 +407,8 @@
     }
   });
 
+  orderFilters.push(order => !$('unanswered-only').checked || [...state.requests.values()].some(request => request.orderId === order.id && !request.answer));
+  $('unanswered-only').addEventListener('change', renderOrders);
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
     const item = element('li', (definition.from === department ? '書き出し' : '取り込み') + ' · ' +
