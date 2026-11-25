@@ -162,6 +162,22 @@
         formFields.querySelector('[name="orderId"]').focus();
       });
       label.append(element('span', fields[field][0] + (input.required ? ' *' : '')), input);
+      if (field === 'product') {
+        const limit = 100;
+        const count = element('span');
+        count.id = 'product-length';
+        count.className = 'hint';
+        count.setAttribute('aria-live', 'polite');
+        input.setAttribute('aria-describedby', count.id);
+        const updateCount = () => {
+          const length = [...input.value].length;
+          count.textContent = length + ' / ' + limit + '文字' + (length > limit ? '（目安を超えています）' : '');
+          count.classList.toggle('attention', length > limit);
+        };
+        input.addEventListener('input', updateCount);
+        updateCount();
+        label.append(count);
+      }
       formFields.append(label);
     }
     $('action-help').textContent = type === 'order' ? '注文IDと依頼IDは自動で発行します。' :
@@ -203,19 +219,41 @@
     tableBody.append(row);
   }
 
+  const orderFilters = [];
+
   function renderOrders() {
     const list = $('orders');
     list.replaceChildren();
     for (const order of [...state.orders.values()].reverse()) {
+      if (!orderFilters.every(filter => filter(order))) continue;
       const row = element('tr');
       const values = [order.id, order.product, order.paper, order.quantity + '部', order.dueDate,
         statusOf(order), order.proofStatus || '—', order.expectedDate || '—',
         order.delayReason || '—', order.initialFinished || order.goodQuantity ? order.goodQuantity + '部' : '—'];
       row.append(...values.map(value => element('td', value)));
+      if (order.delayReason) {
+        const source = events.find(event => event.type === 'order' && event.orderId === order.id);
+        const editor = element('details');
+        editor.append(element('summary', '顧客向け遅延連絡'));
+        const message = element('textarea');
+        message.value = source.salesDelayContact?.message ?? '';
+        const messageLabel = element('label', '顧客へ伝えた内容');
+        messageLabel.append(message);
+        const save = element('button', '保存');
+        save.type = 'button';
+        save.addEventListener('click', () => {
+          if (!message.reportValidity()) return;
+          source.salesDelayContact = { message: message.value.trim() };
+          hasUnsavedChanges = true;
+          show('注文 ' + order.id + ' の顧客向け遅延連絡を台帳に記録しました。');
+        });
+        editor.append(messageLabel, save);
+        row.children[8].append(editor);
+      }
       list.append(row);
     }
     if (!list.children.length) rowMessage(list, 10, '注文がありません。');
-    $('order-count').textContent = state.orders.size + '件';
+    $('order-count').textContent = list.querySelectorAll('tr:not(:has(.empty))').length + '件表示 ／ 全' + state.orders.size + '件';
   }
 
   function renderHistory() {
@@ -227,6 +265,9 @@
       const row = element('tr');
       const detail = element('details');
       detail.append(element('summary', '内容を見る'));
+      if (event.type === 'reply' && state.requests.get(event.requestId)?.superseded) {
+        detail.append(element('p', '古い変更の承認のため、現在の注文は上書きしていません。'));
+      }
       const metadata = element('dl');
       for (const field of definition.fields) {
         metadata.append(element('dt', fields[field]?.[0] || '更新日時'), element('dd', event[field] || '—'));
@@ -379,6 +420,19 @@
       input.value = '';
     }
   });
+
+  orderFilters.push(order => !$('due-today').checked || order.dueDate === localDate());
+  $('due-today').addEventListener('change', renderOrders);
+
+  let previousDate = localDate();
+  function updateTodayFilter() {
+    const today = localDate();
+    if (today === previousDate) return;
+    previousDate = today;
+    if ($('due-today').checked) renderOrders();
+  }
+  window.addEventListener('focus', updateTodayFilter);
+  setInterval(updateTodayFilter, 1000);
 
   const guidance = $('csv-types');
   for (const [type, definition] of Object.entries(workflow.interfaces)) {
