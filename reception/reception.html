@@ -67,6 +67,11 @@
 
     <section aria-labelledby="orders-title">
       <h2 id="orders-title">注文一覧 <span id="order-count" class="count"></span></h2>
+      <nav aria-label="注文一覧のページ移動">
+        <button id="orders-prev" type="button" class="secondary">前へ</button>
+        <span id="order-page" role="status"></span>
+        <button id="orders-next" type="button" class="secondary">次へ</button>
+      </nav>
       <div id="order-filters">
         <label><input type="checkbox" id="due-today">今日が納期の注文のみ</label>
         <label><input type="checkbox" id="proof-this-week">校正期限が今週中で回答待ち</label>
