@@ -374,6 +374,31 @@
       }
       timeline.append(entries);
       row.children[5].append(timeline);
+      {
+      const source = events.find(event => event.type === 'order' && event.orderId === order.id);
+      const editor = element('details');
+      editor.append(element('summary', '顧客の連絡先'));
+      const phone = element('input');
+      phone.type = 'tel';
+      phone.value = source.salesCustomer?.phone ?? '';
+      const phoneLabel = element('label', '電話番号');
+      phoneLabel.append(phone);
+      const email = element('input');
+      email.type = 'email';
+      email.value = source.salesCustomer?.email ?? '';
+      const emailLabel = element('label', 'メールアドレス');
+      emailLabel.append(email);
+      const save = element('button', '保存');
+      save.type = 'button';
+      save.addEventListener('click', () => {
+        if (!phone.reportValidity() || !email.reportValidity()) return;
+        source.salesCustomer = { phone: phone.value.trim(), email: email.value.trim() };
+        hasUnsavedChanges = true;
+        show('注文 ' + order.id + ' の顧客の連絡先を台帳に記録しました。');
+      });
+      editor.append(phoneLabel, emailLabel, save);
+      row.children[1].append(editor);
+      }
       const sourceForContact = events.find(event => event.type === 'order' && event.orderId === order.id);
       const contact = element('details');
       contact.append(element('summary', '確定納期の顧客連絡記録'));
